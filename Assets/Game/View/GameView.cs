@@ -15,7 +15,7 @@ namespace Pointless
         const float CellHalf = 0.435f;
         const float Corner = 0.2f;
         const float SnapReach = 0.8f;
-        const float TouchLift = 1.2f;
+        const float TouchLift = 0.45f;
         const float DropTime = 0.07f;
         const float PopTime = 0.24f;
         const float FlashTime = 0.08f;

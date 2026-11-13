@@ -67,7 +67,10 @@ namespace Pointless.Editor
                 try
                 {
                     step.Invoke(view, new object[] { 1f });
-                    Vector2 offset = positions[slot] - from;
+                    float expectedLift = touch ? 0.45f * (float)typeof(GameView).GetField("side", flags).GetValue(view) : 0f;
+                    var offset = new Vector2(0f, expectedLift);
+                    if ((positions[slot] - from - offset).sqrMagnitude > 0.000001f)
+                        throw new System.InvalidOperationException($"Wrong pickup offset for {(touch ? "touch" : "mouse")}.");
                     foreach (float delta in new[] { 1f / 30f, 1f / 60f, 1f / 120f })
                     {
                         foreach (Vector2 movement in new[] { new Vector2(1.4f, 2.2f), new Vector2(-2.8f, -1.1f) })
@@ -76,7 +79,7 @@ namespace Pointless.Editor
                             view.Drag(at);
                             step.Invoke(view, new object[] { delta });
                             if ((positions[slot] - at - offset).sqrMagnitude > 0.000001f)
-                                throw new System.InvalidOperationException($"Drag lags behind {(touch ? "touch" : "mouse")} at {1f / delta:0} FPS.");
+                                throw new System.InvalidOperationException($"Drag offset changes for {(touch ? "touch" : "mouse")} at {1f / delta:0} FPS.");
                             from = at;
                         }
                     }
@@ -88,7 +91,7 @@ namespace Pointless.Editor
                     step.Invoke(view, new object[] { 1f });
                 }
             }
-            return "Drag follows mouse and touch at 30, 60 and 120 FPS, including direction changes.";
+            return "Drag keeps a small touch lift and no mouse offset at 30, 60 and 120 FPS, including direction changes.";
         }
 
         public static string Frame()
