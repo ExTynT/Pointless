@@ -45,6 +45,52 @@ namespace Pointless.Editor
             return Report(view.State);
         }
 
+        public static string CheckDrag()
+        {
+            if (!Application.isPlaying) throw new System.InvalidOperationException("Enter Play mode first.");
+            GameView view = View();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var positions = (Vector2[])typeof(GameView).GetField("slotAt", flags).GetValue(view);
+            var step = typeof(GameView).GetMethod("Step", flags);
+            var held = typeof(GameView).GetField("held", flags);
+            if ((int)held.GetValue(view) >= 0)
+                throw new System.InvalidOperationException("Release the held piece first.");
+            if (!Choose(view.State, out int slot, out _))
+                throw new System.InvalidOperationException("No playable piece.");
+
+            foreach (bool touch in new[] { false, true })
+            {
+                Vector2 from = view.SlotPoint(slot);
+                view.Press(from, touch);
+                if ((int)held.GetValue(view) != slot)
+                    throw new System.InvalidOperationException("Wait for the pieces to arrive before checking drag.");
+                try
+                {
+                    step.Invoke(view, new object[] { 1f });
+                    Vector2 offset = positions[slot] - from;
+                    foreach (float delta in new[] { 1f / 30f, 1f / 60f, 1f / 120f })
+                    {
+                        foreach (Vector2 movement in new[] { new Vector2(1.4f, 2.2f), new Vector2(-2.8f, -1.1f) })
+                        {
+                            Vector2 at = from + movement;
+                            view.Drag(at);
+                            step.Invoke(view, new object[] { delta });
+                            if ((positions[slot] - at - offset).sqrMagnitude > 0.000001f)
+                                throw new System.InvalidOperationException($"Drag lags behind {(touch ? "touch" : "mouse")} at {1f / delta:0} FPS.");
+                            from = at;
+                        }
+                    }
+                }
+                finally
+                {
+                    view.Drag(new Vector2(-100f, -100f));
+                    view.Release();
+                    step.Invoke(view, new object[] { 1f });
+                }
+            }
+            return "Drag follows mouse and touch at 30, 60 and 120 FPS, including direction changes.";
+        }
+
         public static string Frame()
         {
             if (frame == null) frame = new RenderTexture(Wide, High, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);

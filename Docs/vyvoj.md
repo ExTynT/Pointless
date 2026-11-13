@@ -2,7 +2,7 @@
 
 ## Ovládanie
 
-- Potiahni dielik z ponuky na dosku. Pri myši je dielik pod kurzorom, pri dotyku tesne nad prstom. Prichytáva sa na najbližšie voľné miesto.
+- Potiahni dielik z ponuky na dosku. Pri myši je dielik pod kurzorom, pri dotyku tesne nad prstom. Počas ťahania sleduje pohyb bez vyhladzovania polohy; pri pustení použije poslednú polohu dotyku. Prichytáva sa na najbližšie voľné miesto.
 - Bunky, ktoré sa po položení vyčistia, sa rozsvietia už počas ťahania.
 - Šípka vľavo hore: Undo, raz na trojicu. Funguje aj na obrazovke konca partie.
 - Tri čiarky vpravo hore: zvuk.
@@ -31,6 +31,8 @@ Skóre sa presunie do stredu (zlaté pri novom rekorde), pod ním je rekord, po�
 | `Assets/Game/Editor` | Nastavenie projektu, build, robot na automatické hranie, simulácia partií. |
 
 Po zmene nastavení projektu alebo scény spusti **Pointless > Set Up Project**.
+
+Ťahanie over v režime Play volaním `Pointless.Editor.Robot.CheckDrag()`. Kontrola skúša myš aj dotyk pri 30, 60 a 120 FPS vrátane zmeny smeru; dielik potom vráti do ponuky.
 
 ## Ladenie obťažnosti
 

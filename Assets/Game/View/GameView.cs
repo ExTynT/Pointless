@@ -183,7 +183,7 @@ namespace Pointless
                 snap = -1;
                 ghost = doomed = 0;
                 lift = touch ? TouchLift * side : 0f;
-                aim = at + new Vector2(0f, lift);
+                slotAt[slot] = aim = at + new Vector2(0f, lift);
                 sfx.Pick();
                 Haptics.Tick();
                 return;
@@ -193,7 +193,7 @@ namespace Pointless
         public void Drag(Vector2 at)
         {
             if (held < 0) return;
-            aim = at + new Vector2(0f, lift);
+            slotAt[held] = aim = at + new Vector2(0f, lift);
             Seek();
         }
 
@@ -225,8 +225,11 @@ namespace Pointless
             Vector2 pixel = pointer.position.ReadValue();
             var at = new Vector2((pixel.x / pixelsWide - 0.5f) * Wide, (pixel.y / pixelsHigh - 0.5f) * high);
             if (!pressed) Press(at, pointer is Touchscreen);
-            else if (down) Drag(at);
-            else Release();
+            else
+            {
+                Drag(at);
+                if (!down) Release();
+            }
             pressed = down;
         }
 
@@ -502,7 +505,7 @@ namespace Pointless
                 if (game.Tray[slot] < 0 || now < slotFrom[slot]) continue;
                 bool lifted = slot == held;
                 float pull = 1f - Mathf.Exp(-delta * (lifted ? 32f : 18f));
-                slotAt[slot] += ((lifted ? aim : Home(slot)) - slotAt[slot]) * pull;
+                if (!lifted) slotAt[slot] += (Home(slot) - slotAt[slot]) * pull;
                 slotSize[slot] += ((lifted ? 1f : TraySize) - slotSize[slot]) * pull;
             }
 
