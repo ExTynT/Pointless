@@ -43,6 +43,7 @@ namespace Pointless.Core
         public int Lines;
         public int MaxCombo;
         public bool Over;
+        public bool IsDaily;
         public readonly byte[] Tint = new byte[Lattice.Cells];
         public readonly int[] Tray = new int[Slots];
         public readonly byte[] TrayTint = new byte[Slots];
@@ -54,7 +55,7 @@ namespace Pointless.Core
         bool undoReady;
         bool undoSpent;
 
-        public bool CanUndo => undoReady;
+        public bool CanUndo => !IsDaily && undoReady;
 
         public bool TrioAlive
         {
@@ -66,9 +67,10 @@ namespace Pointless.Core
             }
         }
 
-        public void Start(ulong seed)
+        public void Start(ulong seed, bool daily = false)
         {
             rng = new Rng(seed);
+            IsDaily = daily;
             Board = 0;
             Score = Combo = Misses = Lines = MaxCombo = 0;
             Over = false;
