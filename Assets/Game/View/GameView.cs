@@ -35,6 +35,7 @@ namespace Pointless
         const string MuteKey = "mute";
         const string TaughtKey = "taught";
         const string SavedKey = "saved";
+        const string DailyModeKey = "daily_mode";
 
         struct Dying
         {
@@ -90,14 +91,14 @@ namespace Pointless
         float high, side, rise, cellHalf, apexY, trayY, slotGap, scoreY, bestY, pipY, endY, lift, veil;
         int endLines, endCombo;
         bool endRecord, feted;
-        Vector2 undoAt, soundAt, streakAt;
+        Vector2 undoAt, soundAt, streakAt, dailyAt, shareAt;
         int held = -1, snap = -1, hintSlot = -1, hintPlace;
         Vector2 aim, dropFrom;
         ulong ghost, doomed, dropMask;
         int dyingCount, sweepCount, shardCount, popupCount;
-        float now, busyUntil, shown, idleAt, hintAt, dropAt, scoreHit, streakHit, bestHit, shakeAt, shakeSize, overAt, perfectAt;
+        float now, busyUntil, shown, idleAt, hintAt, dropAt, scoreHit, streakHit, bestHit, shakeAt, shakeSize, overAt, perfectAt, copiedAt;
         int best, record;
-        bool pressed, dirty, taught, beaten;
+        bool pressed, dirty, taught, beaten, isDaily;
 
         public Game State => game;
 
@@ -117,7 +118,7 @@ namespace Pointless
             taught = PlayerPrefs.GetInt(TaughtKey, 0) == 1;
             chance = new Rng((ulong)DateTime.UtcNow.Ticks);
             now = Time.unscaledTime;
-            scoreHit = streakHit = bestHit = shakeAt = perfectAt = dropAt = now - 10f;
+            copiedAt = scoreHit = streakHit = bestHit = shakeAt = perfectAt = dropAt = now - 10f;
             pixelsWide = pixelsHigh = 0;
             Fit();
             if (game.Unpack(PlayerPrefs.GetString(SavedKey, string.Empty)) && !game.Over) Resume();
@@ -157,6 +158,12 @@ namespace Pointless
             Busy(0.3f);
             idleAt = now;
             hintSlot = -1;
+            if (NearBox(at, dailyAt, side * 1.1f, side * 0.45f))
+            {
+                Begin(!isDaily);
+                sfx.Pick();
+                return;
+            }
             if (Near(at, soundAt))
             {
                 sfx.Muted = !sfx.Muted;
@@ -171,7 +178,18 @@ namespace Pointless
             }
             if (game.Over)
             {
-                if (now > overAt + RestartWait) Begin();
+                if (isDaily && now > overAt + RestartWait && NearBox(at, shareAt, side * 1.4f, side * 0.55f))
+                {
+                    string shareText = $"Pointless Daily {DateTime.UtcNow:yyyy-MM-dd}\nSkóre: {game.Score}\nLínie: {endLines}\nMax Kombo: {endCombo}";
+                    GUIUtility.systemCopyBuffer = shareText;
+                    copiedAt = now;
+                    sfx.Pick();
+                    Haptics.Click();
+                    Busy(2.2f);
+                    Debug.Log("Skopírované:\n" + shareText);
+                    return;
+                }
+                if (now > overAt + RestartWait) Begin(isDaily);
                 return;
             }
             for (int slot = 0; slot < Game.Slots; slot++)
@@ -267,23 +285,31 @@ namespace Pointless
             undoAt = new Vector2(-Wide * 0.5f + 0.95f * side, scoreY + 0.5f * side);
             soundAt = new Vector2(Wide * 0.5f - 0.95f * side, scoreY + 0.5f * side);
             streakAt = new Vector2(-2.55f * side, apexY - 1.9f * rise);
+            dailyAt = new Vector2(-Wide * 0.5f + 1.35f * side, scoreY - 0.6f * side);
+            shareAt = new Vector2(0f, endY - 3.2f * side);
 
             for (int slot = 0; slot < Game.Slots; slot++)
                 if (slot != held) slotAt[slot] = Home(slot);
             dirty = true;
         }
 
-        void Begin()
+        void Begin(bool daily = false)
         {
             Keep();
             record = best;
             beaten = false;
+            isDaily = daily;
+            PlayerPrefs.DeleteKey(SavedKey);
+
             for (ulong old = game.Board; old != 0; old &= old - 1)
             {
                 int cell = Bits.Lowest(old);
                 Die(cell, game.Tint[cell], now + Lattice.Y[cell] * 0.03f);
             }
-            game.Start(chance.Next());
+
+            ulong seed = daily ? (ulong)(DateTime.UtcNow.Year * 10000 + DateTime.UtcNow.Month * 100 + DateTime.UtcNow.Day) : chance.Next();
+            game.Start(seed, daily);
+
             held = snap = -1;
             ghost = doomed = dropMask = 0;
             popupCount = sweepCount = 0;
@@ -294,6 +320,7 @@ namespace Pointless
 
         void Resume()
         {
+            isDaily = game.IsDaily = PlayerPrefs.GetInt(DailyModeKey, 0) == 1;
             record = best;
             beaten = game.Score >= record;
             shown = game.Score;
@@ -322,7 +349,7 @@ namespace Pointless
 
         void Guide()
         {
-            if (taught || held >= 0 || game.Over || now - idleAt < HintWait)
+            if (isDaily || taught || held >= 0 || game.Over || now - idleAt < HintWait)
             {
                 hintSlot = -1;
                 return;
@@ -458,6 +485,7 @@ namespace Pointless
         void Store()
         {
             Keep();
+            PlayerPrefs.SetInt(DailyModeKey, isDaily ? 1 : 0);
             if (game.Over) PlayerPrefs.DeleteKey(SavedKey);
             else PlayerPrefs.SetString(SavedKey, game.Pack());
             PlayerPrefs.Save();
@@ -772,8 +800,15 @@ namespace Pointless
 
             float ready = Mathf.Clamp01((veil - 0.6f) / 0.4f);
             if (ready <= 0f) return;
+
+            if (isDaily)
+            {
+                bool copied = now - copiedAt < 2f;
+                DrawWord(copied ? "COPIED" : "SHARE", shareAt, side * 0.36f * Spring(ready), copied ? Theme.Gold : Theme.Ink);
+            }
+
             float beat = 1f + 0.05f * Mathf.Sin(now * 3.2f);
-            batch.Tri(0f, endY - 4.1f * side, side * 0.8f * beat * Spring(ready), true, -Mathf.PI * 0.5f, Theme.Ink, Theme.Ink, 0.22f);
+            batch.Tri(0f, endY - 4.4f * side, side * 0.8f * beat * Spring(ready), true, -Mathf.PI * 0.5f, Theme.Ink, Theme.Ink, 0.22f);
         }
 
         void Icons()
@@ -790,6 +825,8 @@ namespace Pointless
                 float x = soundAt.x + (i - 1) * side * 0.17f;
                 batch.Line(x, soundAt.y - tall, x, soundAt.y + tall, side * 0.045f, sfx.Muted ? Theme.Faint : Theme.Dim);
             }
+
+            DrawWord("DAILY", dailyAt, side * 0.3f, isDaily ? Theme.Gold : Theme.Dim);
         }
 
         void Hint()
@@ -843,6 +880,39 @@ namespace Pointless
             apexY - (shape.OriginY[place] + shape.CenterY) * rise);
 
         bool Near(Vector2 at, Vector2 target) => (at - target).sqrMagnitude < side * side * 0.5f;
+
+        bool NearBox(Vector2 at, Vector2 target, float halfW, float halfH) =>
+            Mathf.Abs(at.x - target.x) <= halfW && Mathf.Abs(at.y - target.y) <= halfH;
+
+        void DrawWord(string word, Vector2 center, float height, Color32 color)
+        {
+            float w = height * 0.6f, gap = height * 0.28f, t = height * 0.16f;
+            float total = word.Length * w + (word.Length - 1) * gap;
+            float ox = center.x - total * 0.5f, oy = center.y - height * 0.5f;
+
+            for (int i = 0; i < word.Length; i++)
+            {
+                float x = ox + i * (w + gap);
+                void Seg(float x0, float y0, float x1, float y1) =>
+                    batch.Line(x + x0 * w, oy + y0 * height, x + x1 * w, oy + y1 * height, t, color);
+
+                switch (word[i])
+                {
+                    case 'D': Seg(0, 0, 0, 1); Seg(0, 1, 0.65f, 1); Seg(0.65f, 1, 1, 0.65f); Seg(1, 0.65f, 1, 0.35f); Seg(1, 0.35f, 0.65f, 0); Seg(0.65f, 0, 0, 0); break;
+                    case 'A': Seg(0, 0, 0.5f, 1); Seg(0.5f, 1, 1, 0); Seg(0.22f, 0.38f, 0.78f, 0.38f); break;
+                    case 'I': Seg(0.5f, 0, 0.5f, 1); Seg(0.2f, 1, 0.8f, 1); Seg(0.2f, 0, 0.8f, 0); break;
+                    case 'L': Seg(0, 1, 0, 0); Seg(0, 0, 0.9f, 0); break;
+                    case 'Y': Seg(0, 1, 0.5f, 0.5f); Seg(1, 1, 0.5f, 0.5f); Seg(0.5f, 0.5f, 0.5f, 0); break;
+                    case 'S': Seg(1, 1, 0, 1); Seg(0, 1, 0, 0.5f); Seg(0, 0.5f, 1, 0.5f); Seg(1, 0.5f, 1, 0); Seg(1, 0, 0, 0); break;
+                    case 'H': Seg(0, 0, 0, 1); Seg(1, 0, 1, 1); Seg(0, 0.5f, 1, 0.5f); break;
+                    case 'R': Seg(0, 0, 0, 1); Seg(0, 1, 0.8f, 1); Seg(0.8f, 1, 1, 0.8f); Seg(1, 0.8f, 1, 0.65f); Seg(1, 0.65f, 0.8f, 0.5f); Seg(0.8f, 0.5f, 0, 0.5f); Seg(0.5f, 0.5f, 1, 0); break;
+                    case 'E': Seg(1, 1, 0, 1); Seg(0, 1, 0, 0); Seg(0, 0, 1, 0); Seg(0, 0.5f, 0.75f, 0.5f); break;
+                    case 'C': Seg(1, 1, 0, 1); Seg(0, 1, 0, 0); Seg(0, 0, 1, 0); break;
+                    case 'O': Seg(0, 0, 0, 1); Seg(0, 1, 1, 1); Seg(1, 1, 1, 0); Seg(1, 0, 0, 0); break;
+                    case 'P': Seg(0, 0, 0, 1); Seg(0, 1, 0.85f, 1); Seg(0.85f, 1, 1, 0.85f); Seg(1, 0.85f, 1, 0.65f); Seg(1, 0.65f, 0.85f, 0.5f); Seg(0.85f, 0.5f, 0, 0.5f); break;
+                }
+            }
+        }
 
         void Busy(float seconds)
         {
