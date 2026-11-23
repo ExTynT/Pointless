@@ -33,10 +33,12 @@ namespace Pointless.Core
         const float ComboStep = 0.38f;
         const int ComboCap = 10;
         const int LegacyFields = 17;
-        const int SavedFields = LegacyFields + 1;
+        const int SavedV2Fields = LegacyFields + 1;
+        const int SavedFields = LegacyFields + 2;
 
         static readonly string legacyFormat = $"p1.{Shapes.All.Length}.{Lattice.Lines.Length}";
-        static readonly string format = $"p2.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string formatV2 = $"p2.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string format = $"p3.{Shapes.All.Length}.{Lattice.Lines.Length}";
 
         public ulong Board;
         public int Score;
@@ -46,6 +48,7 @@ namespace Pointless.Core
         public int MaxCombo;
         public bool Over;
         public Mode Mode { get; private set; }
+        public ulong Seed { get; private set; }
         public ModeRules Rules => ModeRules.For(Mode);
         public readonly byte[] Tint = new byte[Lattice.Cells];
         public readonly int[] Tray = new int[Slots];
@@ -76,6 +79,7 @@ namespace Pointless.Core
         public void Start(ulong seed, Mode mode = Mode.Arcade)
         {
             historyNext = historyCount = 0;
+            Seed = seed;
             rng = new Rng(seed);
             Mode = mode;
             Board = 0;
@@ -174,14 +178,14 @@ namespace Pointless.Core
 
         public string Pack()
         {
-            var text = new StringBuilder(192);
+            var text = new StringBuilder(208);
             text.Append(format).Append(' ').Append(Board).Append(' ').Append(Score).Append(' ').Append(Combo).Append(' ')
                 .Append(Misses).Append(' ').Append(Lines).Append(' ').Append(MaxCombo).Append(' ').Append(rng.State);
             for (int slot = 0; slot < Slots; slot++) text.Append(' ').Append(Tray[slot]);
             for (int slot = 0; slot < Slots; slot++) text.Append(' ').Append(TrayTint[slot]);
             text.Append(' ').Append(Flags(Placed)).Append(' ').Append(Flags(Scored)).Append(' ');
             for (int cell = 0; cell < Lattice.Cells; cell++) text.Append((char)('0' + Tint[cell]));
-            return text.Append(' ').Append((int)Mode).ToString();
+            return text.Append(' ').Append((int)Mode).Append(' ').Append(Seed).ToString();
         }
 
         public bool Unpack(string saved)
@@ -189,7 +193,15 @@ namespace Pointless.Core
             if (string.IsNullOrEmpty(saved)) return false;
             string[] parts = saved.Split(' ');
             Mode mode = Mode.Arcade;
+            ulong seed = 0;
             if (parts.Length == SavedFields && parts[0] == format)
+            {
+                if (!uint.TryParse(parts[LegacyFields], NumberStyles.None, CultureInfo.InvariantCulture, out uint value)
+                    || value > (uint)Mode.Daily) return false;
+                if (!ulong.TryParse(parts[LegacyFields + 1], NumberStyles.None, CultureInfo.InvariantCulture, out seed)) return false;
+                mode = (Mode)value;
+            }
+            else if (parts.Length == SavedV2Fields && parts[0] == formatV2)
             {
                 if (!uint.TryParse(parts[LegacyFields], NumberStyles.None, CultureInfo.InvariantCulture, out uint value)
                     || value > (uint)Mode.Daily) return false;
@@ -218,6 +230,7 @@ namespace Pointless.Core
             }
 
             Mode = mode;
+            Seed = seed;
             Board = numbers[0];
             Score = (int)numbers[1];
             Combo = (int)numbers[2];
@@ -241,7 +254,8 @@ namespace Pointless.Core
 
         void Deal()
         {
-            Generator.Deal(Board, Score, ref rng, Tray, Rules.Generator);
+            if (Mode == Mode.Daily) Generator.DealDaily(ref rng, Tray);
+            else Generator.Deal(Board, Score, ref rng, Tray, Rules.Generator);
             int first = rng.Range(Tints);
             int stride = 1 + rng.Range(2);
             for (int slot = 0; slot < Slots; slot++)
@@ -257,6 +271,7 @@ namespace Pointless.Core
         void Copy(Game from)
         {
             Mode = from.Mode;
+            Seed = from.Seed;
             Board = from.Board;
             Score = from.Score;
             Combo = from.Combo;

@@ -31,7 +31,10 @@ namespace Pointless
         const float HintWait = 1.6f;
         const float HintLoop = 2.2f;
         const int IdleInterval = 4;
-        const string BestKey = "best";
+        const string LegacyBestKey = "best";
+        const string ArcadeBestKey = "best.arcade";
+        const string FlowBestKey = "best.flow";
+        const string DailyBestPrefix = "best.daily.";
         const string MuteKey = "mute";
         const string TaughtKey = "taught";
         const string FlowHintKey = "flow_hints";
@@ -114,7 +117,14 @@ namespace Pointless
             surface.sharedMesh = batch.Mesh;
             sfx = new Sfx(gameObject) { Muted = PlayerPrefs.GetInt(MuteKey, 0) == 1 };
             Haptics.Start();
-            best = PlayerPrefs.GetInt(BestKey, 0);
+            if (PlayerPrefs.HasKey(LegacyBestKey))
+            {
+                int legacy = PlayerPrefs.GetInt(LegacyBestKey, 0);
+                if (legacy > PlayerPrefs.GetInt(ArcadeBestKey, 0))
+                    PlayerPrefs.SetInt(ArcadeBestKey, legacy);
+                PlayerPrefs.DeleteKey(LegacyBestKey);
+                PlayerPrefs.Save();
+            }
             flowHints = PlayerPrefs.GetInt(FlowHintKey, 0) == 1;
             taught = PlayerPrefs.GetInt(TaughtKey, 0) == 1;
             chance = new Rng((ulong)DateTime.UtcNow.Ticks);
@@ -187,10 +197,10 @@ namespace Pointless
             }
             if (game.Over)
             {
-                if (game.Mode == Mode.Daily && now > overAt + RestartWait && NearBox(at, shareAt, side * 1.4f, side * 0.55f))
+                if (game.Mode == Mode.Daily && now > overAt + RestartWait && NearBox(at, shareAt, side * 0.9f, side * 0.45f))
                 {
-                    string shareText = $"Pointless Daily {DateTime.UtcNow:yyyy-MM-dd}\nSkóre: {game.Score}\nLínie: {endLines}\nMax Kombo: {endCombo}";
-                    GUIUtility.systemCopyBuffer = shareText;
+                    string shareText = $"Pointless Daily {FormatSeedDate(game.Seed)}\nSkóre: {game.Score}\nLínie: {endLines}\nMax Kombo: {endCombo}";
+                    ShareText(shareText);
                     copiedAt = now;
                     sfx.Pick();
                     Haptics.Click();
@@ -305,9 +315,13 @@ namespace Pointless
 
         public void Begin(Mode mode = Mode.Arcade)
         {
+            ulong seed = mode == Mode.Daily ? TodaySeed() : chance.Next();
+            BeginSeed(mode, seed);
+        }
+
+        public void BeginSeed(Mode mode, ulong seed)
+        {
             Keep();
-            record = best;
-            beaten = false;
             PlayerPrefs.DeleteKey(SavedKey);
 
             for (ulong old = game.Board; old != 0; old &= old - 1)
@@ -316,8 +330,12 @@ namespace Pointless
                 Die(cell, game.Tint[cell], now + Lattice.Y[cell] * 0.03f);
             }
 
-            ulong seed = mode == Mode.Daily ? (ulong)(DateTime.UtcNow.Year * 10000 + DateTime.UtcNow.Month * 100 + DateTime.UtcNow.Day) : chance.Next();
             game.Start(seed, mode);
+            best = PlayerPrefs.GetInt(BestKey(), 0);
+            record = best;
+            beaten = false;
+            endRecord = false;
+            feted = false;
 
             held = snap = -1;
             ghost = doomed = dropMask = 0;
@@ -329,8 +347,9 @@ namespace Pointless
 
         void Resume()
         {
+            best = Mathf.Max(PlayerPrefs.GetInt(BestKey(), 0), game.Score);
             record = best;
-            beaten = game.Score >= record;
+            beaten = record > 0 && game.Score >= record;
             shown = game.Score;
             Arrive(0.1f);
             Refresh();
@@ -474,7 +493,8 @@ namespace Pointless
             if (game.Rules.Undo == UndoPolicy.Unlimited)
             {
                 // Game over or a pause may already have saved the move we just undid.
-                if (PlayerPrefs.GetInt(BestKey, 0) > best) PlayerPrefs.SetInt(BestKey, best);
+                string key = BestKey();
+                if (PlayerPrefs.GetInt(key, 0) > best) PlayerPrefs.SetInt(key, best);
                 endRecord = feted = false;
                 veil = 0f;
                 shardCount = 0;
@@ -501,7 +521,8 @@ namespace Pointless
 
         void Keep()
         {
-            if (best > PlayerPrefs.GetInt(BestKey, 0)) PlayerPrefs.SetInt(BestKey, best);
+            string key = BestKey();
+            if (best > PlayerPrefs.GetInt(key, 0)) PlayerPrefs.SetInt(key, best);
         }
 
         void Store()
@@ -826,7 +847,31 @@ namespace Pointless
             if (game.Mode == Mode.Daily)
             {
                 bool copied = now - copiedAt < 2f;
-                DrawWord(copied ? "COPIED" : "SHARE", shareAt, side * 0.36f * Spring(ready), copied ? Theme.Gold : Theme.Ink);
+                float cx = shareAt.x, cy = shareAt.y;
+                float s = side * 0.28f * Spring(ready);
+                if (copied)
+                {
+                    float age = Mathf.Clamp01((now - copiedAt) / 0.25f);
+                    float cs = s * (1f + 0.22f * Mathf.Sin(age * Mathf.PI) * (1f - age));
+                    float lineR = cs * 0.18f;
+                    Color32 gold = Theme.Gold;
+                    float x0 = cx - 0.75f * cs, y0 = cy - 0.05f * cs;
+                    float x1 = cx - 0.15f * cs, y1 = cy - 0.65f * cs;
+                    float x2 = cx + 0.85f * cs, y2 = cy + 0.65f * cs;
+                    batch.Line(x0, y0, x1, y1, lineR, gold);
+                    batch.Line(x1, y1, x2, y2, lineR, gold);
+                }
+                else
+                {
+                    float lx = cx - 0.8f * s, rx = cx + 0.75f * s, dy = 0.78f * s;
+                    float lineR = s * 0.12f, dotR = s * 0.30f;
+                    Color32 ink = Theme.Ink;
+                    batch.Line(lx, cy, rx, cy + dy, lineR, ink);
+                    batch.Line(lx, cy, rx, cy - dy, lineR, ink);
+                    batch.Dot(lx, cy, dotR, ink);
+                    batch.Dot(rx, cy + dy, dotR, ink);
+                    batch.Dot(rx, cy - dy, dotR, ink);
+                }
             }
 
             float beat = 1f + 0.05f * Mathf.Sin(now * 3.2f);
@@ -915,6 +960,55 @@ namespace Pointless
         bool NearBox(Vector2 at, Vector2 target, float halfW, float halfH) =>
             Mathf.Abs(at.x - target.x) <= halfW && Mathf.Abs(at.y - target.y) <= halfH;
 
+        static ulong TodaySeed()
+        {
+            DateTime today = DateTime.Now;
+            return (ulong)(today.Year * 10000 + today.Month * 100 + today.Day);
+        }
+
+        static string FormatSeedDate(ulong seed)
+        {
+            if (seed == 0) seed = TodaySeed();
+            int year = (int)(seed / 10000);
+            int month = (int)((seed / 100) % 100);
+            int day = (int)(seed % 100);
+            return $"{year:0000}-{month:00}-{day:00}";
+        }
+
+        string BestKey() => game.Mode switch
+        {
+            Mode.Flow => FlowBestKey,
+            Mode.Daily => DailyBestPrefix + (game.Seed != 0 ? game.Seed : TodaySeed()),
+            _ => ArcadeBestKey
+        };
+
+        static void ShareText(string shareText)
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using var intentClass = new AndroidJavaClass("android.content.Intent");
+                string actionSend = intentClass.GetStatic<string>("ACTION_SEND");
+                string extraText = intentClass.GetStatic<string>("EXTRA_TEXT");
+                using var intent = new AndroidJavaObject("android.content.Intent");
+                using (intent.Call<AndroidJavaObject>("setAction", actionSend)) { }
+                using (intent.Call<AndroidJavaObject>("setType", "text/plain")) { }
+                using (intent.Call<AndroidJavaObject>("putExtra", extraText, shareText)) { }
+                using var chooser = intentClass.CallStatic<AndroidJavaObject>("createChooser", intent, "Pointless Daily");
+                using var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+                using var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
+                activity.Call("startActivity", chooser);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Android share failed: {ex.Message}");
+            }
+#endif
+            GUIUtility.systemCopyBuffer = shareText;
+        }
+
+        // Delete DrawWord once DAILY in Icons() is replaced by the mode selector.
         void DrawWord(string word, Vector2 center, float height, Color32 color)
         {
             float w = height * 0.6f, gap = height * 0.28f, t = height * 0.16f;
@@ -934,13 +1028,6 @@ namespace Pointless
                     case 'I': Seg(0.5f, 0, 0.5f, 1); Seg(0.2f, 1, 0.8f, 1); Seg(0.2f, 0, 0.8f, 0); break;
                     case 'L': Seg(0, 1, 0, 0); Seg(0, 0, 0.9f, 0); break;
                     case 'Y': Seg(0, 1, 0.5f, 0.5f); Seg(1, 1, 0.5f, 0.5f); Seg(0.5f, 0.5f, 0.5f, 0); break;
-                    case 'S': Seg(1, 1, 0, 1); Seg(0, 1, 0, 0.5f); Seg(0, 0.5f, 1, 0.5f); Seg(1, 0.5f, 1, 0); Seg(1, 0, 0, 0); break;
-                    case 'H': Seg(0, 0, 0, 1); Seg(1, 0, 1, 1); Seg(0, 0.5f, 1, 0.5f); break;
-                    case 'R': Seg(0, 0, 0, 1); Seg(0, 1, 0.8f, 1); Seg(0.8f, 1, 1, 0.8f); Seg(1, 0.8f, 1, 0.65f); Seg(1, 0.65f, 0.8f, 0.5f); Seg(0.8f, 0.5f, 0, 0.5f); Seg(0.5f, 0.5f, 1, 0); break;
-                    case 'E': Seg(1, 1, 0, 1); Seg(0, 1, 0, 0); Seg(0, 0, 1, 0); Seg(0, 0.5f, 0.75f, 0.5f); break;
-                    case 'C': Seg(1, 1, 0, 1); Seg(0, 1, 0, 0); Seg(0, 0, 1, 0); break;
-                    case 'O': Seg(0, 0, 0, 1); Seg(0, 1, 1, 1); Seg(1, 1, 1, 0); Seg(1, 0, 0, 0); break;
-                    case 'P': Seg(0, 0, 0, 1); Seg(0, 1, 0.85f, 1); Seg(0.85f, 1, 1, 0.85f); Seg(1, 0.85f, 1, 0.65f); Seg(1, 0.65f, 0.85f, 0.5f); Seg(0.85f, 0.5f, 0, 0.5f); break;
                 }
             }
         }

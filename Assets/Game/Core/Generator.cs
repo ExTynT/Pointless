@@ -6,18 +6,22 @@ namespace Pointless.Core
             new float[] { 0, 9, 28, 32, 20, 8, 3 }, new float[] { 0, 3, 12, 24, 30, 20, 11 }, 12000, 0.9f, 0.45f);
         public static readonly GeneratorProfile Relaxed = new GeneratorProfile(
             new float[] { 0, 57, 33, 9, 0.8f, 0.15f, 0.05f }, new float[] { 0, 54, 34, 11, 0.8f, 0.15f, 0.05f }, 12000, 0.96f, 0.96f);
+        public static readonly GeneratorProfile Daily = new GeneratorProfile(
+            new float[] { 0, 34, 36, 20, 7, 2, 1 }, new float[] { 0, 34, 36, 20, 7, 2, 1 }, 1, 0f, 0f, true);
 
         readonly float[] easy, hard;
         readonly int hardScore;
         readonly float easyHelp, hardHelp;
+        internal readonly bool Blind;
 
-        GeneratorProfile(float[] easy, float[] hard, int hardScore, float easyHelp, float hardHelp)
+        GeneratorProfile(float[] easy, float[] hard, int hardScore, float easyHelp, float hardHelp, bool blind = false)
         {
             this.easy = easy;
             this.hard = hard;
             this.hardScore = hardScore;
             this.easyHelp = easyHelp;
             this.hardHelp = hardHelp;
+            Blind = blind;
         }
 
         internal float Level(int score) => score >= hardScore ? 1f : (float)score / hardScore;
@@ -32,6 +36,12 @@ namespace Pointless.Core
 
         public static void Deal(ulong board, int score, ref Rng rng, int[] trio, GeneratorProfile profile)
         {
+            if (profile.Blind)
+            {
+                DealDaily(ref rng, trio, profile);
+                return;
+            }
+
             float level = profile.Level(score);
             float help = profile.Help(level);
 
@@ -72,11 +82,23 @@ namespace Pointless.Core
                 if (bestPlace >= 0) board = Lattice.Settle(board | Shapes.All[best].Mask[bestPlace]);
             }
 
-            for (int slot = trio.Length - 1; slot > 0; slot--)
+            Shuffle(trio, ref rng);
+        }
+
+        public static void DealDaily(ref Rng rng, int[] trio, GeneratorProfile profile = null)
+        {
+            profile ??= GeneratorProfile.Daily;
+            for (int slot = 0; slot < trio.Length; slot++)
             {
-                int other = rng.Range(slot + 1);
-                (trio[slot], trio[other]) = (trio[other], trio[slot]);
+                int id;
+                do
+                {
+                    id = Sample(profile, 0f, false, ref rng);
+                } while (Taken(trio, slot, id));
+                trio[slot] = id;
             }
+
+            Shuffle(trio, ref rng);
         }
 
         public static int Best(ulong board, Shape shape, ref Rng rng, out int value)
@@ -110,6 +132,15 @@ namespace Pointless.Core
                 best = place;
             }
             return best;
+        }
+
+        static void Shuffle(int[] trio, ref Rng rng)
+        {
+            for (int slot = trio.Length - 1; slot > 0; slot--)
+            {
+                int other = rng.Range(slot + 1);
+                (trio[slot], trio[other]) = (trio[other], trio[slot]);
+            }
         }
 
         static int Rescue(ulong board, ref Rng rng, out int place)

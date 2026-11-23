@@ -2,7 +2,7 @@ using System;
 
 namespace Pointless.Core
 {
-    // These numbers are part of the p2 save format.
+    // These numbers are part of the p2/p3 save format.
     public enum Mode { Arcade = 0, Flow = 1, Daily = 2 }
     public enum UndoPolicy { None, OncePerTrio, Unlimited }
     public enum HintPolicy { None, Tutorial, Optional }
@@ -11,7 +11,7 @@ namespace Pointless.Core
     {
         static readonly ModeRules arcade = new ModeRules(true, UndoPolicy.OncePerTrio, HintPolicy.Tutorial, GeneratorProfile.Standard);
         static readonly ModeRules flow = new ModeRules(false, UndoPolicy.Unlimited, HintPolicy.Optional, GeneratorProfile.Relaxed);
-        static readonly ModeRules daily = new ModeRules(true, UndoPolicy.None, HintPolicy.None, GeneratorProfile.Standard);
+        static readonly ModeRules daily = new ModeRules(true, UndoPolicy.None, HintPolicy.None, GeneratorProfile.Daily);
 
         public bool ComboExpires { get; }
         public UndoPolicy Undo { get; }
