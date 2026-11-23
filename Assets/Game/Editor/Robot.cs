@@ -13,6 +13,12 @@ namespace Pointless.Editor
         static RenderTexture frame;
         static Rng rng = new Rng(7);
 
+        [UnityEditor.MenuItem("Pointless/Start Flow in Play Mode", true)]
+        static bool CanStartFlow() => Application.isPlaying && View() != null;
+
+        [UnityEditor.MenuItem("Pointless/Start Flow in Play Mode")]
+        static void StartFlow() => View().Begin(Mode.Flow);
+
         public static string Lift(float nudgeX = 0f, float nudgeY = 0f)
         {
             GameView view = View();

@@ -34,6 +34,7 @@ namespace Pointless
         const string BestKey = "best";
         const string MuteKey = "mute";
         const string TaughtKey = "taught";
+        const string FlowHintKey = "flow_hints";
         const string SavedKey = "saved";
 
         struct Dying
@@ -90,14 +91,14 @@ namespace Pointless
         float high, side, rise, cellHalf, apexY, trayY, slotGap, scoreY, bestY, pipY, endY, lift, veil;
         int endLines, endCombo;
         bool endRecord, feted;
-        Vector2 undoAt, soundAt, streakAt, dailyAt, shareAt;
+        Vector2 undoAt, soundAt, hintButtonAt, streakAt, dailyAt, shareAt;
         int held = -1, snap = -1, hintSlot = -1, hintPlace;
         Vector2 aim, dropFrom;
         ulong ghost, doomed, dropMask;
         int dyingCount, sweepCount, shardCount, popupCount;
         float now, busyUntil, shown, idleAt, hintAt, dropAt, scoreHit, streakHit, bestHit, shakeAt, shakeSize, overAt, perfectAt, copiedAt;
         int best, record;
-        bool pressed, dirty, taught, beaten;
+        bool pressed, dirty, taught, beaten, flowHints;
 
         public Game State => game;
 
@@ -114,6 +115,7 @@ namespace Pointless
             sfx = new Sfx(gameObject) { Muted = PlayerPrefs.GetInt(MuteKey, 0) == 1 };
             Haptics.Start();
             best = PlayerPrefs.GetInt(BestKey, 0);
+            flowHints = PlayerPrefs.GetInt(FlowHintKey, 0) == 1;
             taught = PlayerPrefs.GetInt(TaughtKey, 0) == 1;
             chance = new Rng((ulong)DateTime.UtcNow.Ticks);
             now = Time.unscaledTime;
@@ -160,6 +162,14 @@ namespace Pointless
             if (NearBox(at, dailyAt, side * 1.1f, side * 0.45f))
             {
                 Begin(game.Mode == Mode.Daily ? Mode.Arcade : Mode.Daily);
+                sfx.Pick();
+                return;
+            }
+            if (game.Rules.Hints == HintPolicy.Optional && Near(at, hintButtonAt))
+            {
+                flowHints = !flowHints;
+                PlayerPrefs.SetInt(FlowHintKey, flowHints ? 1 : 0);
+                PlayerPrefs.Save();
                 sfx.Pick();
                 return;
             }
@@ -285,6 +295,7 @@ namespace Pointless
             soundAt = new Vector2(Wide * 0.5f - 0.95f * side, scoreY + 0.5f * side);
             streakAt = new Vector2(-2.55f * side, apexY - 1.9f * rise);
             dailyAt = new Vector2(-Wide * 0.5f + 1.35f * side, scoreY - 0.6f * side);
+            hintButtonAt = new Vector2(soundAt.x, dailyAt.y - 0.25f * side);
             shareAt = new Vector2(0f, endY - 3.2f * side);
 
             for (int slot = 0; slot < Game.Slots; slot++)
@@ -292,7 +303,7 @@ namespace Pointless
             dirty = true;
         }
 
-        void Begin(Mode mode = Mode.Arcade)
+        public void Begin(Mode mode = Mode.Arcade)
         {
             Keep();
             record = best;
@@ -346,7 +357,8 @@ namespace Pointless
 
         void Guide()
         {
-            if (game.Rules.Hints != HintPolicy.Tutorial || taught || held >= 0 || game.Over || now - idleAt < HintWait)
+            bool enabled = game.Rules.Hints == HintPolicy.Optional ? flowHints : game.Rules.Hints == HintPolicy.Tutorial && !taught;
+            if (!enabled || held >= 0 || game.Over || now - idleAt < HintWait)
             {
                 hintSlot = -1;
                 return;
@@ -399,7 +411,7 @@ namespace Pointless
             dropMask = move.Mask & game.Board;
             dropAt = scoreHit = now;
             sfx.Place(shape.Size);
-            if (!taught)
+            if (!taught && game.Rules.Hints != HintPolicy.Optional)
             {
                 taught = true;
                 PlayerPrefs.SetInt(TaughtKey, 1);
@@ -459,6 +471,19 @@ namespace Pointless
             game.Undo();
             best = Mathf.Max(record, game.Score);
             beaten = beaten && game.Score > record;
+            if (game.Rules.Undo == UndoPolicy.Unlimited)
+            {
+                // Game over or a pause may already have saved the move we just undid.
+                if (PlayerPrefs.GetInt(BestKey, 0) > best) PlayerPrefs.SetInt(BestKey, best);
+                endRecord = feted = false;
+                veil = 0f;
+                shardCount = 0;
+                hintSlot = -1;
+                idleAt = now;
+                perfectAt = shakeAt = bestHit = streakHit = scoreHit = now - 10f;
+                for (int i = 0; i < pipAt.Length; i++) pipAt[i] = now - 10f;
+                sfx.StopVoices();
+            }
             held = snap = -1;
             ghost = doomed = dropMask = 0;
             dyingCount = sweepCount = popupCount = 0;
@@ -747,6 +772,7 @@ namespace Pointless
             float size = side * 0.62f * (1f + 0.35f * Mathf.Sin(bump * Mathf.PI) * (1f - bump));
             int length = Glyphs.Write(text, game.Combo, Glyphs.Times);
             Glyphs.Draw(batch, text, length, streakAt.x, streakAt.y, size, 0.5f, heat, 0.16f);
+            if (!game.Rules.ComboExpires) return;
             for (int i = 0; i < Game.Grace; i++)
                 batch.Dot(streakAt.x + (i - 1) * side * 0.26f, streakAt.y - side * 0.34f, side * 0.055f, i < Game.Grace - game.Misses ? heat : Theme.Faint);
         }
@@ -822,6 +848,15 @@ namespace Pointless
                 batch.Line(x, soundAt.y - tall, x, soundAt.y + tall, side * 0.045f, sfx.Muted ? Theme.Faint : Theme.Dim);
             }
 
+            if (game.Rules.Hints == HintPolicy.Optional)
+            {
+                // A light bulb drawn with the same rounded primitives as the sound icon.
+                Color32 ink = flowHints ? Theme.Gold : Theme.Dim;
+                float x = hintButtonAt.x, y = hintButtonAt.y;
+                batch.Dot(x, y + side * 0.06f, side * 0.17f, ink);
+                batch.Dot(x, y + side * 0.06f, side * 0.105f, Theme.Back);
+                batch.Line(x - side * 0.075f, y - side * 0.15f, x + side * 0.075f, y - side * 0.15f, side * 0.035f, ink);
+            }
             DrawWord("DAILY", dailyAt, side * 0.3f, game.Mode == Mode.Daily ? Theme.Gold : Theme.Dim);
         }
 

@@ -81,6 +81,11 @@ namespace Pointless
             Play(pluck, Pitch(19), 0.6f, 0.17f);
         }
 
+        public void StopVoices()
+        {
+            foreach (AudioSource voice in voices) voice.Stop();
+        }
+
         public void Dispose()
         {
             UnityEngine.Object.Destroy(pluck);
