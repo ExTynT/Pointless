@@ -13,11 +13,62 @@ namespace Pointless.Editor
         static RenderTexture frame;
         static Rng rng = new Rng(7);
 
+        [UnityEditor.MenuItem("Pointless/Start Arcade in Play Mode", true)]
         [UnityEditor.MenuItem("Pointless/Start Flow in Play Mode", true)]
-        static bool CanStartFlow() => Application.isPlaying && View() != null;
+        [UnityEditor.MenuItem("Pointless/Start Daily in Play Mode", true)]
+        static bool CanStartMode() => Application.isPlaying && View() != null;
+
+        [UnityEditor.MenuItem("Pointless/Start Arcade in Play Mode")]
+        static void StartArcade() => StartMode(Mode.Arcade);
 
         [UnityEditor.MenuItem("Pointless/Start Flow in Play Mode")]
-        static void StartFlow() => View().Begin(Mode.Flow);
+        static void StartFlow() => StartMode(Mode.Flow);
+
+        [UnityEditor.MenuItem("Pointless/Start Daily in Play Mode")]
+        static void StartDaily() => StartMode(Mode.Daily);
+
+        public static string StartMode(Mode mode, ulong seed = 0)
+        {
+            GameView view = View();
+            if (seed == 0) view.Begin(mode);
+            else view.BeginSeed(mode, seed);
+            return Report(view.State);
+        }
+
+        public static string Ready()
+        {
+            GameView view = View();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var slotFrom = (float[])typeof(GameView).GetField("slotFrom", flags).GetValue(view);
+            var step = typeof(GameView).GetMethod("Step", flags);
+            for (int i = 0; i < slotFrom.Length; i++) slotFrom[i] = -1f;
+            step.Invoke(view, new object[] { 1f });
+            return Report(view.State);
+        }
+
+        public static string Undo()
+        {
+            GameView view = View();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var undoAt = (Vector2)typeof(GameView).GetField("undoAt", flags).GetValue(view);
+            view.Press(undoAt);
+            view.Release();
+            return Report(view.State);
+        }
+
+        public static string Share()
+        {
+            GameView view = View();
+            const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var shareAt = (Vector2)typeof(GameView).GetField("shareAt", flags).GetValue(view);
+            var overAtField = typeof(GameView).GetField("overAt", flags);
+            var nowField = typeof(GameView).GetField("now", flags);
+            float now = (float)nowField.GetValue(view);
+            if ((float)overAtField.GetValue(view) + 0.45f >= now) overAtField.SetValue(view, now - 1f);
+            view.Press(shareAt);
+            view.Release();
+            return GUIUtility.systemCopyBuffer;
+        }
 
         public static string Lift(float nudgeX = 0f, float nudgeY = 0f)
         {
