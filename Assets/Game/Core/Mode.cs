@@ -6,7 +6,6 @@ namespace Pointless.Core
     public enum Mode { Arcade = 0, Flow = 1, Daily = 2 }
     public enum UndoPolicy { None, OncePerTrio, Unlimited }
     public enum HintPolicy { None, Tutorial, Optional }
-    public enum GeneratorProfile { Standard, Relaxed }
 
     public sealed class ModeRules
     {

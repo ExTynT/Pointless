@@ -7,7 +7,7 @@ namespace Pointless.Editor
     {
         const int MoveCap = 4000;
 
-        public static string Run(int games, float sloppy)
+        public static string Run(int games, float sloppy, Mode mode = Mode.Arcade)
         {
             var rng = new Rng(99);
             var lengths = new int[games];
@@ -16,7 +16,7 @@ namespace Pointless.Editor
             for (int i = 0; i < games; i++)
             {
                 var game = new Game();
-                game.Start((ulong)(i * 7919 + 1));
+                game.Start((ulong)(i * 7919 + 1), mode);
                 int count = 0;
                 while (!game.Over && count < MoveCap)
                 {
@@ -37,6 +37,57 @@ namespace Pointless.Editor
             report.Append($" | score avg {score / games} | clears per move {(float)lines / moves:0.00} | perfect per game {(float)perfect / games:0.0}");
             report.Append($" | capped {capped} | top combo {topCombo}");
             return report.ToString();
+        }
+
+        public static string CheckFlow()
+        {
+            var game = new Game();
+            game.Start(1, Mode.Flow);
+            var bot = new Rng(99);
+            var states = new string[16];
+            var slots = new int[15];
+            var places = new int[15];
+            states[0] = game.Pack();
+            for (int i = 0; i < slots.Length; i++)
+            {
+                if (!Choose(game, 0f, ref bot, out slots[i], out places[i]))
+                    throw new System.InvalidOperationException("Flow bot stopped before move 15.");
+                game.Place(slots[i], places[i]);
+                states[i + 1] = game.Pack();
+            }
+            for (int i = slots.Length - 1; i >= 0; i--)
+            {
+                game.Undo();
+                if (game.Pack() != states[i])
+                    throw new System.InvalidOperationException($"Wrong state after undoing move {i + 1}.");
+            }
+            if (game.CanUndo) throw new System.InvalidOperationException("Undo past the start.");
+            for (int i = 0; i < slots.Length; i++)
+            {
+                game.Place(slots[i], places[i]);
+                if (game.Pack() != states[i + 1])
+                    throw new System.InvalidOperationException($"Replaying move {i + 1} changed the state.");
+            }
+
+            game.Start(1, Mode.Flow);
+            int misses = 0;
+            for (int i = 0; i < MoveCap && Choose(game, 0.6f, ref bot, out int slot, out int place); i++)
+            {
+                int combo = game.Combo;
+                Move move = game.Place(slot, place);
+                if (move.Lines == 0)
+                {
+                    if (game.Combo != combo) throw new System.InvalidOperationException("Flow combo expired.");
+                    misses++;
+                }
+                else
+                {
+                    if (combo > 0 && misses >= 5 && game.Combo == combo + 1)
+                        return $"15 undos and replays matched; combo {combo} continued after {misses} misses.";
+                    misses = 0;
+                }
+            }
+            throw new System.InvalidOperationException("The bot did not exercise a combo after five misses.");
         }
 
         static bool Choose(Game game, float sloppy, ref Rng rng, out int slot, out int place)

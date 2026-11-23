@@ -1,20 +1,39 @@
 namespace Pointless.Core
 {
+    public sealed class GeneratorProfile
+    {
+        public static readonly GeneratorProfile Standard = new GeneratorProfile(
+            new float[] { 0, 9, 28, 32, 20, 8, 3 }, new float[] { 0, 3, 12, 24, 30, 20, 11 }, 12000, 0.9f, 0.45f);
+        public static readonly GeneratorProfile Relaxed = new GeneratorProfile(
+            new float[] { 0, 57, 33, 9, 0.8f, 0.15f, 0.05f }, new float[] { 0, 54, 34, 11, 0.8f, 0.15f, 0.05f }, 12000, 0.96f, 0.96f);
+
+        readonly float[] easy, hard;
+        readonly int hardScore;
+        readonly float easyHelp, hardHelp;
+
+        GeneratorProfile(float[] easy, float[] hard, int hardScore, float easyHelp, float hardHelp)
+        {
+            this.easy = easy;
+            this.hard = hard;
+            this.hardScore = hardScore;
+            this.easyHelp = easyHelp;
+            this.hardHelp = hardHelp;
+        }
+
+        internal float Level(int score) => score >= hardScore ? 1f : (float)score / hardScore;
+        internal float Help(float level) => easyHelp + (hardHelp - easyHelp) * level;
+        internal float Weight(int size, float level) => easy[size] + (hard[size] - easy[size]) * level;
+    }
+
     public static class Generator
     {
         const int Tries = 10;
-        const int HardScore = 12000;
         const int CrowdedCells = 21;
-        const float EasyHelp = 0.9f;
-        const float HardHelp = 0.45f;
 
-        static readonly float[] easy = { 0f, 9f, 28f, 32f, 20f, 8f, 3f };
-        static readonly float[] hard = { 0f, 3f, 12f, 24f, 30f, 20f, 11f };
-
-        public static void Deal(ulong board, int score, ref Rng rng, int[] trio)
+        public static void Deal(ulong board, int score, ref Rng rng, int[] trio, GeneratorProfile profile)
         {
-            float level = score >= HardScore ? 1f : (float)score / HardScore;
-            float help = EasyHelp + (HardHelp - EasyHelp) * level;
+            float level = profile.Level(score);
+            float help = profile.Help(level);
 
             for (int slot = 0; slot < trio.Length; slot++)
             {
@@ -24,7 +43,7 @@ namespace Pointless.Core
 
                 for (int attempt = 0; attempt < Tries; attempt++)
                 {
-                    int id = Sample(level, crowded, ref rng);
+                    int id = Sample(profile, level, crowded, ref rng);
                     if (Taken(trio, slot, id)) continue;
                     int place = Best(board, Shapes.All[id], ref rng, out int value);
                     if (place < 0) continue;
@@ -111,15 +130,15 @@ namespace Pointless.Core
             return smallest[rng.Range(smallest.Length)];
         }
 
-        static int Sample(float level, bool crowded, ref Rng rng)
+        static int Sample(GeneratorProfile profile, float level, bool crowded, ref Rng rng)
         {
             float total = 0f;
-            for (int size = 1; size <= Shapes.MaxSize; size++) total += Weight(size, level, crowded);
+            for (int size = 1; size <= Shapes.MaxSize; size++) total += Weight(profile, size, level, crowded);
             float roll = rng.Unit() * total;
             int chosen = Shapes.MaxSize;
             for (int size = 1; size <= Shapes.MaxSize; size++)
             {
-                roll -= Weight(size, level, crowded);
+                roll -= Weight(profile, size, level, crowded);
                 if (roll >= 0f) continue;
                 chosen = size;
                 break;
@@ -128,9 +147,9 @@ namespace Pointless.Core
             return ids[rng.Range(ids.Length)];
         }
 
-        static float Weight(int size, float level, bool crowded)
+        static float Weight(GeneratorProfile profile, int size, float level, bool crowded)
         {
-            float weight = easy[size] + (hard[size] - easy[size]) * level;
+            float weight = profile.Weight(size, level);
             if (!crowded) return weight;
             return size >= 5 ? weight * 0.3f : size <= 2 ? weight * 1.7f : weight;
         }

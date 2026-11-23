@@ -54,11 +54,14 @@ namespace Pointless.Core
         public readonly bool[] Scored = new bool[Slots];
 
         Rng rng;
+        const int HistoryLimit = 500;
+        Game[] history;
+        int historyNext, historyCount;
         Game undo;
         bool undoReady;
         bool undoSpent;
 
-        public bool CanUndo => Rules.Undo != UndoPolicy.None && undoReady;
+        public bool CanUndo => Rules.Undo == UndoPolicy.Unlimited ? historyCount > 0 : undoReady;
 
         public bool TrioAlive
         {
@@ -72,6 +75,7 @@ namespace Pointless.Core
 
         public void Start(ulong seed, Mode mode = Mode.Arcade)
         {
+            historyNext = historyCount = 0;
             rng = new Rng(seed);
             Mode = mode;
             Board = 0;
@@ -96,7 +100,15 @@ namespace Pointless.Core
             ulong mask = shape.Mask[place];
             var move = new Move { Slot = slot, Shape = shape.Id, Tint = TrayTint[slot], Mask = mask };
 
-            if (Rules.Undo != UndoPolicy.None && !undoSpent)
+            if (Rules.Undo == UndoPolicy.Unlimited)
+            {
+                history ??= new Game[HistoryLimit];
+                Game snapshot = history[historyNext] ??= new Game();
+                snapshot.Copy(this);
+                historyNext = (historyNext + 1) % HistoryLimit;
+                historyCount = Math.Min(historyCount + 1, HistoryLimit);
+            }
+            else if (Rules.Undo == UndoPolicy.OncePerTrio && !undoSpent)
             {
                 undo ??= new Game();
                 undo.Copy(this);
@@ -148,6 +160,13 @@ namespace Pointless.Core
         public void Undo()
         {
             if (!CanUndo) return;
+            if (Rules.Undo == UndoPolicy.Unlimited)
+            {
+                historyNext = (historyNext + HistoryLimit - 1) % HistoryLimit;
+                Copy(history[historyNext]);
+                historyCount--;
+                return;
+            }
             Copy(undo);
             undoReady = false;
             undoSpent = true;
@@ -214,6 +233,7 @@ namespace Pointless.Core
                 Scored[slot] = (numbers[14] >> slot & 1) != 0;
             }
             for (int cell = 0; cell < Lattice.Cells; cell++) Tint[cell] = (byte)(tints[cell] - '0');
+            historyNext = historyCount = 0;
             undoReady = undoSpent = false;
             Over = !(Fits(0) || Fits(1) || Fits(2));
             return true;
@@ -221,7 +241,7 @@ namespace Pointless.Core
 
         void Deal()
         {
-            Generator.Deal(Board, Score, ref rng, Tray);
+            Generator.Deal(Board, Score, ref rng, Tray, Rules.Generator);
             int first = rng.Range(Tints);
             int stride = 1 + rng.Range(2);
             for (int slot = 0; slot < Slots; slot++)
