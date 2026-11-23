@@ -35,7 +35,6 @@ namespace Pointless
         const string MuteKey = "mute";
         const string TaughtKey = "taught";
         const string SavedKey = "saved";
-        const string DailyModeKey = "daily_mode";
 
         struct Dying
         {
@@ -98,7 +97,7 @@ namespace Pointless
         int dyingCount, sweepCount, shardCount, popupCount;
         float now, busyUntil, shown, idleAt, hintAt, dropAt, scoreHit, streakHit, bestHit, shakeAt, shakeSize, overAt, perfectAt, copiedAt;
         int best, record;
-        bool pressed, dirty, taught, beaten, isDaily;
+        bool pressed, dirty, taught, beaten;
 
         public Game State => game;
 
@@ -160,7 +159,7 @@ namespace Pointless
             hintSlot = -1;
             if (NearBox(at, dailyAt, side * 1.1f, side * 0.45f))
             {
-                Begin(!isDaily);
+                Begin(game.Mode == Mode.Daily ? Mode.Arcade : Mode.Daily);
                 sfx.Pick();
                 return;
             }
@@ -178,7 +177,7 @@ namespace Pointless
             }
             if (game.Over)
             {
-                if (isDaily && now > overAt + RestartWait && NearBox(at, shareAt, side * 1.4f, side * 0.55f))
+                if (game.Mode == Mode.Daily && now > overAt + RestartWait && NearBox(at, shareAt, side * 1.4f, side * 0.55f))
                 {
                     string shareText = $"Pointless Daily {DateTime.UtcNow:yyyy-MM-dd}\nSkóre: {game.Score}\nLínie: {endLines}\nMax Kombo: {endCombo}";
                     GUIUtility.systemCopyBuffer = shareText;
@@ -189,7 +188,7 @@ namespace Pointless
                     Debug.Log("Skopírované:\n" + shareText);
                     return;
                 }
-                if (now > overAt + RestartWait) Begin(isDaily);
+                if (now > overAt + RestartWait) Begin(game.Mode);
                 return;
             }
             for (int slot = 0; slot < Game.Slots; slot++)
@@ -293,12 +292,11 @@ namespace Pointless
             dirty = true;
         }
 
-        void Begin(bool daily = false)
+        void Begin(Mode mode = Mode.Arcade)
         {
             Keep();
             record = best;
             beaten = false;
-            isDaily = daily;
             PlayerPrefs.DeleteKey(SavedKey);
 
             for (ulong old = game.Board; old != 0; old &= old - 1)
@@ -307,8 +305,8 @@ namespace Pointless
                 Die(cell, game.Tint[cell], now + Lattice.Y[cell] * 0.03f);
             }
 
-            ulong seed = daily ? (ulong)(DateTime.UtcNow.Year * 10000 + DateTime.UtcNow.Month * 100 + DateTime.UtcNow.Day) : chance.Next();
-            game.Start(seed, daily);
+            ulong seed = mode == Mode.Daily ? (ulong)(DateTime.UtcNow.Year * 10000 + DateTime.UtcNow.Month * 100 + DateTime.UtcNow.Day) : chance.Next();
+            game.Start(seed, mode);
 
             held = snap = -1;
             ghost = doomed = dropMask = 0;
@@ -320,7 +318,6 @@ namespace Pointless
 
         void Resume()
         {
-            isDaily = game.IsDaily = PlayerPrefs.GetInt(DailyModeKey, 0) == 1;
             record = best;
             beaten = game.Score >= record;
             shown = game.Score;
@@ -349,7 +346,7 @@ namespace Pointless
 
         void Guide()
         {
-            if (isDaily || taught || held >= 0 || game.Over || now - idleAt < HintWait)
+            if (game.Rules.Hints != HintPolicy.Tutorial || taught || held >= 0 || game.Over || now - idleAt < HintWait)
             {
                 hintSlot = -1;
                 return;
@@ -485,7 +482,6 @@ namespace Pointless
         void Store()
         {
             Keep();
-            PlayerPrefs.SetInt(DailyModeKey, isDaily ? 1 : 0);
             if (game.Over) PlayerPrefs.DeleteKey(SavedKey);
             else PlayerPrefs.SetString(SavedKey, game.Pack());
             PlayerPrefs.Save();
@@ -801,7 +797,7 @@ namespace Pointless
             float ready = Mathf.Clamp01((veil - 0.6f) / 0.4f);
             if (ready <= 0f) return;
 
-            if (isDaily)
+            if (game.Mode == Mode.Daily)
             {
                 bool copied = now - copiedAt < 2f;
                 DrawWord(copied ? "COPIED" : "SHARE", shareAt, side * 0.36f * Spring(ready), copied ? Theme.Gold : Theme.Ink);
@@ -826,7 +822,7 @@ namespace Pointless
                 batch.Line(x, soundAt.y - tall, x, soundAt.y + tall, side * 0.045f, sfx.Muted ? Theme.Faint : Theme.Dim);
             }
 
-            DrawWord("DAILY", dailyAt, side * 0.3f, isDaily ? Theme.Gold : Theme.Dim);
+            DrawWord("DAILY", dailyAt, side * 0.3f, game.Mode == Mode.Daily ? Theme.Gold : Theme.Dim);
         }
 
         void Hint()

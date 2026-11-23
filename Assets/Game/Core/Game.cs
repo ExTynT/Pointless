@@ -32,9 +32,11 @@ namespace Pointless.Core
         const int LinePoints = 36;
         const float ComboStep = 0.38f;
         const int ComboCap = 10;
-        const int SavedFields = 17;
+        const int LegacyFields = 17;
+        const int SavedFields = LegacyFields + 1;
 
-        static readonly string format = $"p1.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string legacyFormat = $"p1.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string format = $"p2.{Shapes.All.Length}.{Lattice.Lines.Length}";
 
         public ulong Board;
         public int Score;
@@ -43,7 +45,8 @@ namespace Pointless.Core
         public int Lines;
         public int MaxCombo;
         public bool Over;
-        public bool IsDaily;
+        public Mode Mode { get; private set; }
+        public ModeRules Rules => ModeRules.For(Mode);
         public readonly byte[] Tint = new byte[Lattice.Cells];
         public readonly int[] Tray = new int[Slots];
         public readonly byte[] TrayTint = new byte[Slots];
@@ -55,7 +58,7 @@ namespace Pointless.Core
         bool undoReady;
         bool undoSpent;
 
-        public bool CanUndo => !IsDaily && undoReady;
+        public bool CanUndo => Rules.Undo != UndoPolicy.None && undoReady;
 
         public bool TrioAlive
         {
@@ -67,10 +70,10 @@ namespace Pointless.Core
             }
         }
 
-        public void Start(ulong seed, bool daily = false)
+        public void Start(ulong seed, Mode mode = Mode.Arcade)
         {
             rng = new Rng(seed);
-            IsDaily = daily;
+            Mode = mode;
             Board = 0;
             Score = Combo = Misses = Lines = MaxCombo = 0;
             Over = false;
@@ -93,7 +96,7 @@ namespace Pointless.Core
             ulong mask = shape.Mask[place];
             var move = new Move { Slot = slot, Shape = shape.Id, Tint = TrayTint[slot], Mask = mask };
 
-            if (!undoSpent)
+            if (Rules.Undo != UndoPolicy.None && !undoSpent)
             {
                 undo ??= new Game();
                 undo.Copy(this);
@@ -120,7 +123,7 @@ namespace Pointless.Core
                 Lines += move.Lines;
                 if (Combo > MaxCombo) MaxCombo = Combo;
             }
-            else if (++Misses >= Grace)
+            else if (Rules.ComboExpires && ++Misses >= Grace)
             {
                 move.Broke = Combo > 1;
                 Combo = 0;
@@ -144,7 +147,7 @@ namespace Pointless.Core
 
         public void Undo()
         {
-            if (!undoReady) return;
+            if (!CanUndo) return;
             Copy(undo);
             undoReady = false;
             undoSpent = true;
@@ -159,16 +162,23 @@ namespace Pointless.Core
             for (int slot = 0; slot < Slots; slot++) text.Append(' ').Append(TrayTint[slot]);
             text.Append(' ').Append(Flags(Placed)).Append(' ').Append(Flags(Scored)).Append(' ');
             for (int cell = 0; cell < Lattice.Cells; cell++) text.Append((char)('0' + Tint[cell]));
-            return text.ToString();
+            return text.Append(' ').Append((int)Mode).ToString();
         }
 
         public bool Unpack(string saved)
         {
             if (string.IsNullOrEmpty(saved)) return false;
             string[] parts = saved.Split(' ');
-            if (parts.Length != SavedFields || parts[0] != format) return false;
+            Mode mode = Mode.Arcade;
+            if (parts.Length == SavedFields && parts[0] == format)
+            {
+                if (!uint.TryParse(parts[LegacyFields], NumberStyles.None, CultureInfo.InvariantCulture, out uint value)
+                    || value > (uint)Mode.Daily) return false;
+                mode = (Mode)value;
+            }
+            else if (parts.Length != LegacyFields || parts[0] != legacyFormat) return false;
 
-            var numbers = new ulong[SavedFields - 2];
+            var numbers = new ulong[LegacyFields - 2];
             for (int i = 0; i < numbers.Length; i++)
             {
                 bool minus = parts[i + 1].StartsWith("-", StringComparison.Ordinal);
@@ -177,7 +187,7 @@ namespace Pointless.Core
                 if (minus) numbers[i] = ulong.MaxValue;
             }
 
-            string tints = parts[SavedFields - 1];
+            string tints = parts[LegacyFields - 1];
             if (tints.Length != Lattice.Cells || numbers[0] >> Lattice.Cells != 0) return false;
             for (int cell = 0; cell < Lattice.Cells; cell++)
                 if (tints[cell] < '0' || tints[cell] >= '0' + Tints) return false;
@@ -188,6 +198,7 @@ namespace Pointless.Core
                 if (numbers[10 + slot] >= Tints) return false;
             }
 
+            Mode = mode;
             Board = numbers[0];
             Score = (int)numbers[1];
             Combo = (int)numbers[2];
@@ -225,6 +236,7 @@ namespace Pointless.Core
 
         void Copy(Game from)
         {
+            Mode = from.Mode;
             Board = from.Board;
             Score = from.Score;
             Combo = from.Combo;
