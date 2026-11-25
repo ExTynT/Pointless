@@ -39,6 +39,12 @@ namespace Pointless
         const string TaughtKey = "taught";
         const string FlowHintKey = "flow_hints";
         const string SavedKey = "saved";
+        const string SavedArcadeKey = "saved.arcade";
+        const string SavedFlowKey = "saved.flow";
+        const string SavedDailyKey = "saved.daily";
+        const string LastModeKey = "last_mode";
+        const string ThemeKey = "theme";
+        const string GoalsKey = "goals";
 
         struct Dying
         {
@@ -85,6 +91,14 @@ namespace Pointless
         readonly Shard[] shards = new Shard[256];
         readonly Popup[] popups = new Popup[8];
         readonly char[] text = new char[12];
+        readonly Goals goals = new Goals();
+        public Goals Goals => goals;
+        bool menuOpen;
+        float menuVeil;
+        Vector2 modeButtonAt;
+        readonly Vector2[] menuModeAt = new Vector2[3];
+        readonly Vector2[] menuThemeAt = new Vector2[3];
+        readonly Vector2[] menuGoalAt = new Vector2[4];
 
         Batch batch;
         Sfx sfx;
@@ -116,6 +130,10 @@ namespace Pointless
             batch = new Batch();
             surface.sharedMesh = batch.Mesh;
             sfx = new Sfx(gameObject) { Muted = PlayerPrefs.GetInt(MuteKey, 0) == 1 };
+
+            Theme.Use((ThemeId)PlayerPrefs.GetInt(ThemeKey, 0));
+            if (view != null) view.backgroundColor = Theme.Back;
+
             Haptics.Start();
             if (PlayerPrefs.HasKey(LegacyBestKey))
             {
@@ -125,6 +143,17 @@ namespace Pointless
                 PlayerPrefs.DeleteKey(LegacyBestKey);
                 PlayerPrefs.Save();
             }
+
+            if (PlayerPrefs.HasKey(SavedKey))
+            {
+                string oldSave = PlayerPrefs.GetString(SavedKey, string.Empty);
+                if (!string.IsNullOrEmpty(oldSave) && !PlayerPrefs.HasKey(SavedArcadeKey))
+                    PlayerPrefs.SetString(SavedArcadeKey, oldSave);
+                PlayerPrefs.DeleteKey(SavedKey);
+                PlayerPrefs.Save();
+            }
+            
+            goals.Unpack(PlayerPrefs.GetString(GoalsKey, string.Empty));
             flowHints = PlayerPrefs.GetInt(FlowHintKey, 0) == 1;
             taught = PlayerPrefs.GetInt(TaughtKey, 0) == 1;
             chance = new Rng((ulong)DateTime.UtcNow.Ticks);
@@ -132,8 +161,12 @@ namespace Pointless
             copiedAt = scoreHit = streakHit = bestHit = shakeAt = perfectAt = dropAt = now - 10f;
             pixelsWide = pixelsHigh = 0;
             Fit();
-            if (game.Unpack(PlayerPrefs.GetString(SavedKey, string.Empty)) && !game.Over) Resume();
-            else Begin();
+            Mode startMode = (Mode)Mathf.Clamp(PlayerPrefs.GetInt(LastModeKey, 0), 0, 2);
+            string saved = PlayerPrefs.GetString(SavedKeyFor(startMode), string.Empty);
+            if (game.Unpack(saved) && !game.Over) Resume();
+            else Begin(startMode);
+            // if (game.Unpack(PlayerPrefs.GetString(SavedKey, string.Empty)) && !game.Over) Resume();
+            // else Begin();
         }
 
         void OnDisable()
@@ -157,7 +190,7 @@ namespace Pointless
             Step(Mathf.Min(now - before, 0.05f));
             Guide();
 
-            bool busy = held >= 0 || now < busyUntil || game.Over;
+            bool busy = held >= 0 || now < busyUntil || game.Over || menuOpen || menuVeil > 0f;
             OnDemandRendering.renderFrameInterval = busy ? 1 : IdleInterval;
             if (!busy && !dirty) return;
             dirty = false;
@@ -169,12 +202,62 @@ namespace Pointless
             Busy(0.3f);
             idleAt = now;
             hintSlot = -1;
-            if (NearBox(at, dailyAt, side * 1.1f, side * 0.45f))
+            if (menuOpen)
             {
-                Begin(game.Mode == Mode.Daily ? Mode.Arcade : Mode.Daily);
-                sfx.Pick();
+                for (int i = 0; i < 3; i++)
+                {
+                    if (Near(at, menuModeAt[i]))
+                    {
+                        SwitchMode((Mode)i);
+                        menuOpen = false;
+                        sfx.Pick();
+                        Haptics.Click();
+                        return;
+                    }
+                    if (Near(at, menuThemeAt[i]))
+                    {
+                        Theme.Use((ThemeId)i);
+                        if (view != null) view.backgroundColor = Theme.Back;
+                        PlayerPrefs.SetInt(ThemeKey, i);
+                        PlayerPrefs.Save();
+                        dirty = true;
+                        sfx.Pick();
+                        Haptics.Click();
+                        return;
+                    }
+                }
+                for (int i = 0; i < 4; i++)
+                {
+                    if (Near(at, menuGoalAt[i]))
+                    {
+                        goals.Select((GoalKind)i);
+                        PlayerPrefs.SetString(GoalsKey, goals.Pack());
+                        PlayerPrefs.Save();
+                        dirty = true;
+                        sfx.Pick();
+                        Haptics.Click();
+                        return;
+                    }
+                }
+                menuOpen = false;
+                sfx.Back();
                 return;
             }
+
+            if (Near(at, modeButtonAt))
+            {
+                menuOpen = true;
+                sfx.Pick();
+                Haptics.Click();
+                return;
+            }
+
+            // if (NearBox(at, dailyAt, side * 1.1f, side * 0.45f))
+            // {
+            //     Begin(game.Mode == Mode.Daily ? Mode.Arcade : Mode.Daily);
+            //     sfx.Pick();
+            //     return;
+            // }
             if (game.Rules.Hints == HintPolicy.Optional && Near(at, hintButtonAt))
             {
                 flowHints = !flowHints;
@@ -304,7 +387,14 @@ namespace Pointless
             undoAt = new Vector2(-Wide * 0.5f + 0.95f * side, scoreY + 0.5f * side);
             soundAt = new Vector2(Wide * 0.5f - 0.95f * side, scoreY + 0.5f * side);
             streakAt = new Vector2(-2.55f * side, apexY - 1.9f * rise);
-            dailyAt = new Vector2(-Wide * 0.5f + 1.35f * side, scoreY - 0.6f * side);
+            dailyAt =   modeButtonAt = new Vector2(-Wide * 0.5f + 0.95f * side, scoreY - 0.55f * side);
+            for (int i = 0; i < 3; i++)
+            {
+                menuModeAt[i] = new Vector2((i - 1) * 2.4f * side, apexY - 1.5f * side);
+                menuThemeAt[i] = new Vector2((i - 1) * 2.4f * side, apexY - 3.7f * side);
+            }
+            for (int i = 0; i < 4; i++)
+                menuGoalAt[i] = new Vector2((i - 1.5f) * 1.9f * side, apexY - 5.9f * side);
             hintButtonAt = new Vector2(soundAt.x, dailyAt.y - 0.25f * side);
             shareAt = new Vector2(0f, endY - 3.2f * side);
 
@@ -322,8 +412,9 @@ namespace Pointless
         public void BeginSeed(Mode mode, ulong seed)
         {
             Keep();
-            PlayerPrefs.DeleteKey(SavedKey);
-
+            PlayerPrefs.SetInt(LastModeKey, (int)mode);
+            PlayerPrefs.DeleteKey(SavedKeyFor(mode));
+            goals.ClearHistory();
             for (ulong old = game.Board; old != 0; old &= old - 1)
             {
                 int cell = Bits.Lowest(old);
@@ -426,7 +517,16 @@ namespace Pointless
             Shape shape = Shapes.All[game.Tray[slot]];
             Vector2 target = Spot(shape, place);
             dropFrom = slotAt[slot] - target;
+            bool canUndoMove = game.Rules.Undo != UndoPolicy.None;
             Move move = game.Place(slot, place);
+            int earnedStars = goals.Record(move, canUndoMove);
+            if (earnedStars > 0)
+            {
+                sfx.Record();
+                Haptics.Click();
+                for (int i = 0; i < 6; i++)
+                    Scatter(new Vector2(0f, trayY + side * 1.45f), Theme.Gold);
+            }
             dropMask = move.Mask & game.Board;
             dropAt = scoreHit = now;
             sfx.Place(shape.Size);
@@ -488,6 +588,7 @@ namespace Pointless
         void Undo()
         {
             game.Undo();
+            goals.Undo();
             best = Mathf.Max(record, game.Score);
             beaten = beaten && game.Score > record;
             if (game.Rules.Undo == UndoPolicy.Unlimited)
@@ -528,8 +629,10 @@ namespace Pointless
         void Store()
         {
             Keep();
-            if (game.Over) PlayerPrefs.DeleteKey(SavedKey);
-            else PlayerPrefs.SetString(SavedKey, game.Pack());
+            PlayerPrefs.SetString(GoalsKey, goals.Pack());
+            string key = SavedKeyFor(game.Mode);
+            if (game.Over) PlayerPrefs.DeleteKey(key);
+            else PlayerPrefs.SetString(key, game.Pack());
             PlayerPrefs.Save();
         }
 
@@ -613,6 +716,13 @@ namespace Pointless
                 Busy(0.1f);
             }
             if (shardCount > 0) Busy(0.1f);
+            
+            float menuGoal = menuOpen ? 1f : 0f;
+            if (menuVeil != menuGoal)
+            {
+                menuVeil = Mathf.MoveTowards(menuVeil, menuGoal, delta / 0.22f);
+                Busy(0.1f);
+            }
         }
 
         void Draw()
@@ -753,7 +863,9 @@ namespace Pointless
             Score(open);
             if (veil > 0f) Finish();
             Icons();
+            GoalBar();
             if (hintSlot >= 0) Hint();
+            if (menuVeil > 0f) DrawMenu();
 
             if (held >= 0)
                 Piece(Shapes.All[game.Tray[held]], slotAt[held], slotSize[held], Theme.Top[lifted], Theme.Low[lifted]);
@@ -807,6 +919,17 @@ namespace Pointless
             int length = Glyphs.Write(text, value);
             float size = side * Mathf.Lerp(1f, EndScale, open) * punch;
             float span = Glyphs.Width(text, length, size);
+            float titleY = Mathf.Lerp(scoreY + 1.42f * side, endY + 1.85f * side, open);
+            float titleH = side * Mathf.Lerp(0.22f, 0.26f, open);
+            Color32 titleColor = game.Mode == Mode.Daily ? Theme.Gold : Theme.Dim;
+            string modeLabel = game.Mode switch
+            {
+                Mode.Flow => "FLOW",
+                Mode.Daily => "DAILY",
+                _ => "ARCADE"
+            };
+            DrawWord(modeLabel, new Vector2(0f, titleY), titleH, titleColor);
+
             if (span > Wide * WidestScore) size *= Wide * WidestScore / span;
             Glyphs.Draw(batch, text, length, 0f, Mathf.Lerp(scoreY, endY, open), size, 0.5f, ink, 0.13f);
 
@@ -902,7 +1025,8 @@ namespace Pointless
                 batch.Dot(x, y + side * 0.06f, side * 0.105f, Theme.Back);
                 batch.Line(x - side * 0.075f, y - side * 0.15f, x + side * 0.075f, y - side * 0.15f, side * 0.035f, ink);
             }
-            DrawWord("DAILY", dailyAt, side * 0.3f, game.Mode == Mode.Daily ? Theme.Gold : Theme.Dim);
+            DrawModeIcon(game.Mode, modeButtonAt, side * 0.22f, game.Mode == Mode.Daily ? Theme.Gold : Theme.Dim);
+            // DrawWord("DAILY", dailyAt, side * 0.3f, game.Mode == Mode.Daily ? Theme.Gold : Theme.Dim);
         }
 
         void Hint()
@@ -1023,10 +1147,16 @@ namespace Pointless
 
                 switch (word[i])
                 {
-                    case 'D': Seg(0, 0, 0, 1); Seg(0, 1, 0.65f, 1); Seg(0.65f, 1, 1, 0.65f); Seg(1, 0.65f, 1, 0.35f); Seg(1, 0.35f, 0.65f, 0); Seg(0.65f, 0, 0, 0); break;
                     case 'A': Seg(0, 0, 0.5f, 1); Seg(0.5f, 1, 1, 0); Seg(0.22f, 0.38f, 0.78f, 0.38f); break;
+                    case 'C': Seg(1, 0.82f, 0.65f, 1); Seg(0.65f, 1, 0.35f, 1); Seg(0.35f, 1, 0, 0.65f); Seg(0, 0.65f, 0, 0.35f); Seg(0, 0.35f, 0.35f, 0); Seg(0.35f, 0, 0.65f, 0); Seg(0.65f, 0, 1, 0.18f); break;
+                    case 'D': Seg(0, 0, 0, 1); Seg(0, 1, 0.65f, 1); Seg(0.65f, 1, 1, 0.65f); Seg(1, 0.65f, 1, 0.35f); Seg(1, 0.35f, 0.65f, 0); Seg(0.65f, 0, 0, 0); break;
+                    case 'E': Seg(0, 0, 0, 1); Seg(0, 1, 0.9f, 1); Seg(0, 0.5f, 0.75f, 0.5f); Seg(0, 0, 0.9f, 0); break;
+                    case 'F': Seg(0, 0, 0, 1); Seg(0, 1, 0.9f, 1); Seg(0, 0.5f, 0.75f, 0.5f); break;
                     case 'I': Seg(0.5f, 0, 0.5f, 1); Seg(0.2f, 1, 0.8f, 1); Seg(0.2f, 0, 0.8f, 0); break;
                     case 'L': Seg(0, 1, 0, 0); Seg(0, 0, 0.9f, 0); break;
+                    case 'O': Seg(0.35f, 1, 0.65f, 1); Seg(0.65f, 1, 1, 0.65f); Seg(1, 0.65f, 1, 0.35f); Seg(1, 0.35f, 0.65f, 0); Seg(0.65f, 0, 0.35f, 0); Seg(0.35f, 0, 0, 0.35f); Seg(0, 0.35f, 0, 0.65f); Seg(0, 0.65f, 0.35f, 1); break;
+                    case 'R': Seg(0, 0, 0, 1); Seg(0, 1, 0.7f, 1); Seg(0.7f, 1, 1, 0.8f); Seg(1, 0.8f, 1, 0.65f); Seg(1, 0.65f, 0.7f, 0.5f); Seg(0, 0.5f, 0.7f, 0.5f); Seg(0.55f, 0.5f, 1, 0); break;
+                    case 'W': Seg(0, 1, 0.25f, 0); Seg(0.25f, 0, 0.5f, 0.55f); Seg(0.5f, 0.55f, 0.75f, 0); Seg(0.75f, 0, 1, 1); break;
                     case 'Y': Seg(0, 1, 0.5f, 0.5f); Seg(1, 1, 0.5f, 0.5f); Seg(0.5f, 0.5f, 0.5f, 0); break;
                 }
             }
@@ -1041,6 +1171,167 @@ namespace Pointless
         {
             float back = t - 1f;
             return 1f + back * back * (2.7f * back + 1.7f);
+        }
+
+        public void SwitchMode(Mode target)
+        {
+            if (target == game.Mode) return;
+            Store();
+            PlayerPrefs.SetInt(LastModeKey, (int)target);
+            PlayerPrefs.Save();
+
+
+            for (ulong old = game.Board; old != 0; old &= old - 1)
+            {
+                int cell = Bits.Lowest(old);
+                Die(cell, game.Tint[cell], now + Lattice.Y[cell] * 0.02f);
+            }
+
+            string saved = PlayerPrefs.GetString(SavedKeyFor(target), string.Empty);
+            if (game.Unpack(saved) && !game.Over)
+            {
+                if (target == Mode.Daily && game.Seed != TodaySeed())
+                    Begin(Mode.Daily);
+                else
+                    Resume();
+            }
+            else
+            {
+                Begin(target);
+            }
+        }
+
+        static string SavedKeyFor(Mode mode) => mode switch
+        {
+            Mode.Flow => SavedFlowKey,
+            Mode.Daily => SavedDailyKey,
+            _ => SavedArcadeKey
+        };
+
+        void GoalBar()
+        {
+            if (goals.Active == GoalKind.None) return;
+            float y = trayY + side * 1.42f;
+            float halfW = slotGap * 1.15f;
+            float r = side * 0.042f;
+
+            // Pás postupu nad ponukou
+            batch.Line(-halfW, y, halfW, y, r, Theme.Faint);
+            if (goals.Progress > 0f)
+                batch.Line(-halfW, y, Mathf.Lerp(-halfW, halfW, goals.Progress), y, r, Theme.Gold);
+
+            // Hviezda a počet hviezd vľavo od pásu
+            float sx = -halfW - side * 0.42f;
+            DrawStar(sx, y, side * 0.13f, Theme.Gold);
+            int len = Glyphs.Write(text, goals.Stars);
+            Glyphs.Draw(batch, text, len, sx - side * 0.24f, y - side * 0.11f, side * 0.22f, 1f, Theme.Gold, 0.16f);
+        }
+
+        void DrawMenu()
+        {
+            float open = Mathf.SmoothStep(0f, 1f, menuVeil);
+            float scale = Spring(open);
+            batch.Line(0f, -high, 0f, high, Wide, Theme.Fade(Theme.Back, 0.94f * open));
+
+            // 1. Riadok: 3 režimy (Pohár, Oblak, Kalendár)
+            for (int i = 0; i < 3; i++)
+            {
+                bool active = (int)game.Mode == i;
+                Color32 tint = Theme.Fade(active ? Theme.Gold : Theme.Dim, open);
+                DrawModeIcon((Mode)i, menuModeAt[i], side * 0.34f * scale, tint);
+                if (active) batch.Dot(menuModeAt[i].x, menuModeAt[i].y - side * 0.55f, side * 0.055f * scale, tint);
+            }
+
+            // 2. Riadok: 3 témy (Aurora, Sunset, Ocean)
+            Color32[] previewBack = { Theme.Hex(0x0E1015), Theme.Hex(0x160D18), Theme.Hex(0x08131C) };
+            Color32[] previewMain = { Theme.Hex(0x37D9A0), Theme.Hex(0xFF964F), Theme.Hex(0x2EE6D6) };
+            for (int i = 0; i < 3; i++)
+            {
+                bool active = (int)Theme.Current == i;
+                Vector2 at = menuThemeAt[i];
+                float r = side * 0.36f * scale;
+                if (active) batch.Dot(at.x, at.y, r * 1.22f, Theme.Fade(Theme.Gold, open));
+                batch.Dot(at.x, at.y, r, Theme.Fade(previewBack[i], open));
+                batch.Tri(at.x, at.y, r * 0.58f, true, 0f, Theme.Fade(previewMain[i], open), Theme.Fade(previewMain[i], open), Corner);
+            }
+
+            // 3. Riadok: 4 ciele (Žiadny, Clear Lines, Big Clears, Combo Skill) + hviezdy
+            for (int i = 0; i < 4; i++)
+            {
+                GoalKind kind = (GoalKind)i;
+                bool active = goals.Active == kind;
+                Vector2 at = menuGoalAt[i];
+                Color32 tint = Theme.Fade(active ? Theme.Gold : Theme.Dim, open);
+                DrawGoalIcon(kind, at, side * 0.28f * scale, tint);
+
+                if (kind != GoalKind.None)
+                {
+                    float sy = at.y - side * 0.52f;
+                    DrawStar(at.x - side * 0.14f, sy, side * 0.09f * scale, Theme.Fade(Theme.Gold, open));
+                    int len = Glyphs.Write(text, goals.GetStars(kind));
+                    Glyphs.Draw(batch, text, len, at.x + side * 0.04f, sy - side * 0.09f, side * 0.19f * scale, 0f, Theme.Fade(Theme.Ink, open), 0.16f);
+                }
+            }
+        }
+
+        void DrawModeIcon(Mode mode, Vector2 at, float s, Color32 tint)
+        {
+            float r = s * 0.16f;
+            switch (mode)
+            {
+                case Mode.Arcade: // Pohár
+                    batch.Tri(at.x, at.y + s * 0.25f, s * 0.65f, false, 0f, tint, tint, Corner);
+                    batch.Line(at.x, at.y - s * 0.15f, at.x, at.y - s * 0.65f, r, tint);
+                    batch.Line(at.x - s * 0.45f, at.y - s * 0.65f, at.x + s * 0.45f, at.y - s * 0.65f, r, tint);
+                    break;
+                case Mode.Flow: // Oblak
+                    batch.Dot(at.x - s * 0.42f, at.y - s * 0.15f, s * 0.34f, tint);
+                    batch.Dot(at.x + s * 0.42f, at.y - s * 0.15f, s * 0.34f, tint);
+                    batch.Dot(at.x, at.y + s * 0.12f, s * 0.46f, tint);
+                    batch.Line(at.x - s * 0.42f, at.y - s * 0.33f, at.x + s * 0.42f, at.y - s * 0.33f, s * 0.16f, tint);
+                    break;
+                case Mode.Daily: // Kalendár
+                    float w = s * 0.65f, h = s * 0.58f;
+                    batch.Line(at.x - w, at.y + h, at.x + w, at.y + h, r * 1.4f, tint);
+                    batch.Line(at.x - w, at.y - h, at.x + w, at.y - h, r, tint);
+                    batch.Line(at.x - w, at.y - h, at.x - w, at.y + h, r, tint);
+                    batch.Line(at.x + w, at.y - h, at.x + w, at.y + h, r, tint);
+                    batch.Line(at.x - w * 0.5f, at.y + h, at.x - w * 0.5f, at.y + h * 1.38f, r, tint);
+                    batch.Line(at.x + w * 0.5f, at.y + h, at.x + w * 0.5f, at.y + h * 1.38f, r, tint);
+                    batch.Dot(at.x, at.y - h * 0.15f, r * 1.3f, tint);
+                    break;
+            }
+        }
+
+        void DrawGoalIcon(GoalKind kind, Vector2 at, float s, Color32 tint)
+        {
+            float r = s * 0.16f;
+            switch (kind)
+            {
+                case GoalKind.None: // Prečiarknutý kruh
+                    batch.Dot(at.x, at.y, s * 0.72f, tint);
+                    batch.Dot(at.x, at.y, s * 0.52f, Theme.Back);
+                    batch.Line(at.x - s * 0.5f, at.y - s * 0.5f, at.x + s * 0.5f, at.y + s * 0.5f, r, tint);
+                    break;
+                case GoalKind.ClearLines: // 3 vodorovné línie
+                    for (int row = -1; row <= 1; row++)
+                        batch.Line(at.x - s * 0.65f, at.y + row * s * 0.45f, at.x + s * 0.65f, at.y + row * s * 0.45f, r, tint);
+                    break;
+                case GoalKind.BigClears: // 2 prekrížené línie (multi-clear)
+                    batch.Line(at.x - s * 0.65f, at.y - s * 0.38f, at.x + s * 0.65f, at.y + s * 0.38f, r * 1.2f, tint);
+                    batch.Line(at.x - s * 0.65f, at.y + s * 0.38f, at.x + s * 0.65f, at.y - s * 0.38f, r * 1.2f, tint);
+                    break;
+                case GoalKind.ComboSkill: // Dvojitý blesk / kombo šípky
+                    batch.Tri(at.x, at.y + s * 0.25f, s * 0.52f, true, 0f, tint, tint, Corner);
+                    batch.Tri(at.x, at.y - s * 0.25f, s * 0.52f, true, 0f, tint, tint, Corner);
+                    break;
+            }
+        }
+
+        void DrawStar(float x, float y, float radius, Color32 tint)
+        {
+            batch.Tri(x, y + radius * 0.15f, radius, true, 0f, tint, tint, 0.1f);
+            batch.Tri(x, y - radius * 0.15f, radius, false, 0f, tint, tint, 0.1f);
         }
     }
 }
