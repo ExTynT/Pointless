@@ -16,6 +16,7 @@ namespace Pointless.Core
         public static readonly ulong[] Lines;
         public static readonly byte[] LineStart;
         public static readonly byte[] LineEnd;
+        public static readonly uint[] Family = new uint[3];
 
         static Lattice()
         {
@@ -42,8 +43,12 @@ namespace Pointless.Core
             }
 
             var lines = new List<ulong>();
-            foreach (ulong strip in strips)
-                if (Bits.Count(strip) >= ShortestLine) lines.Add(strip);
+            for (int strip = 0; strip < strips.Length; strip++)
+            {
+                if (Bits.Count(strips[strip]) < ShortestLine) continue;
+                Family[strip / Rows] |= 1u << lines.Count;
+                lines.Add(strips[strip]);
+            }
             Lines = lines.ToArray();
             LineStart = new byte[Lines.Length];
             LineEnd = new byte[Lines.Length];

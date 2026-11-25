@@ -17,6 +17,7 @@ namespace Pointless.Core
         public int Combo;
         public bool Broke;
         public bool Perfect;
+        public bool Triple;
         public bool Dealt;
         public bool Over;
     }
@@ -27,6 +28,7 @@ namespace Pointless.Core
         public const int Tints = 6;
         public const int Grace = 3;
         public const int PerfectBonus = 200;
+        public const int TripleBonus = 300;
         const int CellPoints = 2;
         const int ClearedCellPoints = 7;
         const int LinePoints = 36;
@@ -35,12 +37,14 @@ namespace Pointless.Core
         const int LegacyFields = 17;
         const int SavedV2Fields = LegacyFields + 1;
         const int SavedV3Fields = LegacyFields + 2;
-        const int SavedFields = LegacyFields + 3;
+        const int SavedV4Fields = LegacyFields + 3;
+        const int SavedFields = LegacyFields + 5;
 
         static readonly string legacyFormat = $"p1.{Shapes.All.Length}.{Lattice.Lines.Length}";
         static readonly string formatV2 = $"p2.{Shapes.All.Length}.{Lattice.Lines.Length}";
         static readonly string formatV3 = $"p3.{Shapes.All.Length}.{Lattice.Lines.Length}";
-        static readonly string format = $"p4.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string formatV4 = $"p4.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string format = $"p5.{Shapes.All.Length}.{Lattice.Lines.Length}";
 
         public ulong Board;
         public int Score;
@@ -48,6 +52,8 @@ namespace Pointless.Core
         public int Misses;
         public int Lines;
         public int MaxCombo;
+        public int Perfects;
+        public int Triples;
         public bool Over;
         public Mode Mode { get; private set; }
         public ulong Seed { get; private set; }
@@ -85,7 +91,7 @@ namespace Pointless.Core
             rng = new Rng(seed);
             Mode = mode;
             Board = 0;
-            Score = Combo = Misses = Lines = MaxCombo = 0;
+            Score = Combo = Misses = Lines = MaxCombo = Perfects = Triples = 0;
             Over = false;
             Deal();
         }
@@ -137,6 +143,12 @@ namespace Pointless.Core
                 float multiplier = 1f + ComboStep * Math.Min(Combo - 1, ComboCap);
                 int raw = ClearedCellPoints * Bits.Count(move.Cleared) + LinePoints * move.Lines * move.Lines;
                 move.Points += (int)Math.Floor(raw * multiplier + 0.5f);
+                move.Triple = (move.LineBits & Lattice.Family[0]) != 0 && (move.LineBits & Lattice.Family[1]) != 0 && (move.LineBits & Lattice.Family[2]) != 0;
+                if (move.Triple)
+                {
+                    Score += TripleBonus;
+                    Triples++;
+                }
                 Board &= ~move.Cleared;
                 Lines += move.Lines;
                 if (Combo > MaxCombo) MaxCombo = Combo;
@@ -153,7 +165,11 @@ namespace Pointless.Core
             if (Tray[0] < 0 && Tray[1] < 0 && Tray[2] < 0)
             {
                 move.Perfect = Scored[0] && Scored[1] && Scored[2];
-                if (move.Perfect) Score += PerfectBonus;
+                if (move.Perfect)
+                {
+                    Score += PerfectBonus;
+                    Perfects++;
+                }
                 Deal();
                 move.Dealt = true;
             }
@@ -187,7 +203,7 @@ namespace Pointless.Core
             for (int slot = 0; slot < Slots; slot++) text.Append(' ').Append(TrayTint[slot]);
             text.Append(' ').Append(Flags(Placed)).Append(' ').Append(Flags(Scored)).Append(' ');
             for (int cell = 0; cell < Lattice.Cells; cell++) text.Append((char)('0' + Tint[cell]));
-            return text.Append(' ').Append((int)Mode).Append(' ').Append(Seed).Append(' ').Append(undoSpent ? 1 : 0).ToString();
+            return text.Append(' ').Append((int)Mode).Append(' ').Append(Seed).Append(' ').Append(undoSpent ? 1 : 0).Append(' ').Append(Perfects).Append(' ').Append(Triples).ToString();
         }
 
         public bool Unpack(string saved)
@@ -197,14 +213,18 @@ namespace Pointless.Core
             Mode mode = Mode.Arcade;
             ulong seed = 0;
             bool current = parts.Length == SavedFields && parts[0] == format, spent = false;
-            if (current || parts.Length == SavedV3Fields && parts[0] == formatV3)
+            bool flagged = current || parts.Length == SavedV4Fields && parts[0] == formatV4;
+            int perfects = 0, triples = 0;
+            if (flagged || parts.Length == SavedV3Fields && parts[0] == formatV3)
             {
                 if (!uint.TryParse(parts[LegacyFields], NumberStyles.None, CultureInfo.InvariantCulture, out uint value)
                     || value > (uint)Mode.Daily) return false;
                 if (!ulong.TryParse(parts[LegacyFields + 1], NumberStyles.None, CultureInfo.InvariantCulture, out seed)) return false;
-                if (current && parts[LegacyFields + 2] != "0" && parts[LegacyFields + 2] != "1") return false;
+                if (flagged && parts[LegacyFields + 2] != "0" && parts[LegacyFields + 2] != "1") return false;
+                if (current && !int.TryParse(parts[LegacyFields + 3], NumberStyles.None, CultureInfo.InvariantCulture, out perfects)) return false;
+                if (current && !int.TryParse(parts[LegacyFields + 4], NumberStyles.None, CultureInfo.InvariantCulture, out triples)) return false;
                 mode = (Mode)value;
-                spent = current && parts[LegacyFields + 2] == "1";
+                spent = flagged && parts[LegacyFields + 2] == "1";
             }
             else if (parts.Length == SavedV2Fields && parts[0] == formatV2)
             {
@@ -242,6 +262,8 @@ namespace Pointless.Core
             Misses = (int)numbers[3];
             Lines = (int)numbers[4];
             MaxCombo = (int)numbers[5];
+            Perfects = perfects;
+            Triples = triples;
             rng.State = numbers[6];
             for (int slot = 0; slot < Slots; slot++)
             {
@@ -261,7 +283,7 @@ namespace Pointless.Core
         void Deal()
         {
             if (Mode == Mode.Daily) Generator.DealDaily(ref rng, Tray);
-            else Generator.Deal(Board, Score, ref rng, Tray, Rules.Generator);
+            else Generator.Deal(Board, Score - Triples * TripleBonus, ref rng, Tray, Rules.Generator);
             int first = rng.Range(Tints);
             int stride = 1 + rng.Range(2);
             for (int slot = 0; slot < Slots; slot++)
@@ -284,6 +306,8 @@ namespace Pointless.Core
             Misses = from.Misses;
             Lines = from.Lines;
             MaxCombo = from.MaxCombo;
+            Perfects = from.Perfects;
+            Triples = from.Triples;
             Over = from.Over;
             rng = from.rng;
             Array.Copy(from.Tint, Tint, Tint.Length);
