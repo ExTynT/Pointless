@@ -37,6 +37,7 @@ namespace Pointless.Editor
             Pipeline();
             Scene();
             AssetDatabase.SaveAssets();
+            Log.Info($"Project set up, scene {ScenePath}");
         }
 
         [MenuItem("Pointless/Build Android")]
@@ -51,7 +52,7 @@ namespace Pointless.Editor
             });
             if (report.summary.result != BuildResult.Succeeded)
                 throw new InvalidOperationException($"Android build {report.summary.result}: {report.summary.totalErrors} errors");
-            Debug.Log($"Android build {report.summary.totalSize / 1024} KB at {report.summary.outputPath}");
+            Log.Info($"Android build {report.summary.totalSize / 1024} KB at {report.summary.outputPath}");
         }
 
         static void Player()
@@ -152,7 +153,7 @@ namespace Pointless.Editor
             QualitySettings.SetQualityLevel(current, false);
 
             foreach (string path in leftovers)
-                if (AssetDatabase.LoadMainAssetAtPath(path) != null) AssetDatabase.DeleteAsset(path);
+                if (AssetDatabase.LoadMainAssetAtPath(path) != null && AssetDatabase.DeleteAsset(path)) Log.Info($"Deleted {path}");
         }
 
         static void Scene()
@@ -210,12 +211,14 @@ namespace Pointless.Editor
         {
             SerializedProperty field = fields.FindProperty(name);
             if (field != null) field.intValue = value;
+            else Log.Warn($"{fields.targetObject.name} has no {name}");
         }
 
         static void Set(SerializedObject fields, string name, bool value)
         {
             SerializedProperty field = fields.FindProperty(name);
             if (field != null) field.boolValue = value;
+            else Log.Warn($"{fields.targetObject.name} has no {name}");
         }
     }
 }

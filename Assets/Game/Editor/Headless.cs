@@ -90,7 +90,7 @@ namespace Pointless.Editor
                 throw new InvalidOperationException("Daily check did not reach >= 2 deals with diverged boards.");
 
             string report = $"Daily determinism OK across {DailyDates.Length} dates (shared deals {minSharedDeals}..{maxSharedDeals}, diverged multi-deal games {divergedGames}).";
-            Debug.Log(report);
+            Log.Info(report);
             return report;
         }
 
@@ -100,7 +100,7 @@ namespace Pointless.Editor
             string daily = Trial.Run(100, 0.3f, Mode.Daily);
             string arcade = Trial.Run(100, 0.3f, Mode.Arcade);
             string result = $"Daily:  {daily}\nArcade: {arcade}";
-            Debug.Log(result);
+            Log.Info(result);
             return result;
         }
 
@@ -125,19 +125,23 @@ namespace Pointless.Editor
                 string previewReport = CheckPreviewAndPerfectTrio(view);
                 string undoReport = CheckUndoPolicies(view);
                 string shareReport = CheckDailyEndAndShare(view);
+                string expiryReport = CheckDailyExpiry(view);
+                string switchReport = CheckSwitchToExpiredDaily(view);
+                string freshReport = CheckSwitchToNewGame(view);
+                string effectsReport = CheckSwitchClearsEffects(view);
+                string trioReport = CheckUndoOncePerTrio(view);
+                string recordReport = CheckUndoAfterGameOver(view);
 
-                string summary = $"{dailyReport}\n{previewReport}\n{undoReport}\n{shareReport}";
-                Debug.Log(summary);
+                string summary = $"{dailyReport}\n{previewReport}\n{undoReport}\n{shareReport}\n{expiryReport}\n{switchReport}\n{freshReport}\n{effectsReport}\n{trioReport}\n{recordReport}";
+                Log.Info(summary);
                 return summary;
             }
             finally
             {
                 if (Camera.main != null) Camera.main.targetTexture = null;
+                view.enabled = false;
                 RestorePrefs(savedPrefs);
-                SetField(view, "best", 0);
-                view.Begin(Mode.Arcade);
-                Invoke(view, "Fit");
-                Invoke(view, "Draw");
+                view.enabled = true;
             }
         }
 
@@ -281,6 +285,7 @@ namespace Pointless.Editor
 
         static string CheckDailyEndAndShare(GameView view)
         {
+            SetField(view, "best", 0);
             PlayerPrefs.SetInt("best.arcade", 4242);
             PlayerPrefs.DeleteKey("best.daily.20261123");
             PlayerPrefs.DeleteKey("best.daily.20261122");
@@ -346,6 +351,158 @@ namespace Pointless.Editor
                 throw new InvalidOperationException($"Daily share did not use game seed date: {prevDayCopied}");
 
             return $"Daily end & SHARE OK (screenshots: {midShot}, {shareShot}, {copiedShot}).";
+        }
+
+        static string CheckDailyExpiry(GameView view)
+        {
+            ulong today = DateSeed(DateTime.Now), yesterday = DateSeed(DateTime.Now.AddDays(-1));
+            view.BeginSeed(Mode.Arcade, 4321);
+            SkipArrival(view);
+            view.enabled = false;
+            PlayerPrefs.SetString("saved.daily", StaleDaily(yesterday));
+            PlayerPrefs.SetInt("last_mode", (int)Mode.Daily);
+            SetField(view, "dyingCount", 0);
+            view.enabled = true;
+            SkipArrival(view);
+            if (view.State.Mode != Mode.Daily || view.State.Seed != today)
+                throw new InvalidOperationException($"Startup resumed {view.State.Mode} {view.State.Seed} instead of a new Daily {today}.");
+            if (GetField<int>(view, "dyingCount") != 0)
+                throw new InvalidOperationException("Startup dissolved the cells of an expired Daily it never showed.");
+            return $"Startup replaces the Daily of {yesterday} with {today}.";
+        }
+
+        static string CheckSwitchToExpiredDaily(GameView view)
+        {
+            ulong today = DateSeed(DateTime.Now), yesterday = DateSeed(DateTime.Now.AddDays(-1));
+            string key = "best.daily." + yesterday;
+            var rng = new Rng(23);
+            PlayerPrefs.SetInt("best.arcade", 9999);
+            PlayerPrefs.SetInt(key, 100);
+            view.BeginSeed(Mode.Arcade, 4321);
+            int shown = Fill(view, ref rng);
+            PlayerPrefs.SetString("saved.daily", StaleDaily(yesterday));
+            SetField(view, "dyingCount", 0);
+            view.SwitchMode(Mode.Daily);
+            SkipArrival(view);
+            if (view.State.Seed != today)
+                throw new InvalidOperationException($"Switching to Daily resumed {view.State.Seed} instead of {today}.");
+            if (PlayerPrefs.GetInt(key, 0) != 100)
+                throw new InvalidOperationException($"Switching to Daily wrote {PlayerPrefs.GetInt(key, 0)} into the record of {yesterday}.");
+            int dying = GetField<int>(view, "dyingCount");
+            if (dying != shown)
+                throw new InvalidOperationException($"Switching to Daily dissolved {dying} cells, the screen showed {shown}.");
+            return $"Switching to Daily starts {today}, keeps the record of {yesterday} and dissolves only the {shown} cells on screen.";
+        }
+
+        static string CheckSwitchToNewGame(GameView view)
+        {
+            var rng = new Rng(29);
+            view.BeginSeed(Mode.Arcade, 4321);
+            int shown = Fill(view, ref rng);
+            PlayerPrefs.DeleteKey("saved.flow");
+            SetField(view, "dyingCount", 0);
+            view.SwitchMode(Mode.Flow);
+            int dying = GetField<int>(view, "dyingCount");
+            if (dying != shown)
+                throw new InvalidOperationException($"Switching to a new Flow game dissolved {dying} cells, the screen showed {shown}.");
+            return $"Switching to a new game dissolves the {shown} cells on screen once.";
+        }
+
+        static string CheckSwitchClearsEffects(GameView view)
+        {
+            var rng = new Rng(37);
+            view.BeginSeed(Mode.Flow, 5);
+            SkipArrival(view);
+            PickBest(view.State, ref rng, out int first, out int firstPlace);
+            PlaceThroughView(view, first, firstPlace);
+            view.SwitchMode(Mode.Arcade);
+            view.BeginSeed(Mode.Arcade, 99);
+            SkipArrival(view);
+            for (int i = 0; i < 300 && view.State.Lines == 0; i++)
+            {
+                if (!PickBest(view.State, ref rng, out int slot, out int place)) break;
+                PlaceThroughView(view, slot, place);
+            }
+            int popups = GetField<int>(view, "popupCount"), sweeps = GetField<int>(view, "sweepCount");
+            if (popups == 0 || sweeps == 0)
+                throw new InvalidOperationException("No clearing move before the switch.");
+            view.SwitchMode(Mode.Flow);
+            int left = GetField<int>(view, "popupCount"), flashes = GetField<int>(view, "sweepCount");
+            if (view.State.Mode != Mode.Flow || view.State.Score == 0)
+                throw new InvalidOperationException("Switching back did not resume the Flow game.");
+            if (left != 0 || flashes != 0)
+                throw new InvalidOperationException($"Resumed Flow game still shows {left} popups and {flashes} line flashes from Arcade.");
+            return $"Resuming Flow clears {popups} popups and {sweeps} line flashes from Arcade.";
+        }
+
+        static string CheckUndoOncePerTrio(GameView view)
+        {
+            var rng = new Rng(41);
+            view.BeginSeed(Mode.Arcade, 2024);
+            SkipArrival(view);
+            PickBest(view.State, ref rng, out int slot, out int place);
+            PlaceThroughView(view, slot, place);
+            Robot.Undo();
+            SkipArrival(view);
+            if (view.State.CanUndo)
+                throw new InvalidOperationException("Arcade allowed a second Undo right away.");
+            view.SwitchMode(Mode.Flow);
+            view.SwitchMode(Mode.Arcade);
+            SkipArrival(view);
+            PickBest(view.State, ref rng, out slot, out place);
+            PlaceThroughView(view, slot, place);
+            if (view.State.CanUndo)
+                throw new InvalidOperationException("Leaving and resuming Arcade gave a second Undo in the same trio.");
+            return "Arcade keeps one Undo per trio across a mode switch.";
+        }
+
+        static string CheckUndoAfterGameOver(GameView view)
+        {
+            var rng = new Rng(17);
+            for (ulong seed = 1; seed <= 200; seed++)
+            {
+                SetField(view, "best", 0);
+                PlayerPrefs.DeleteKey("best.arcade");
+                view.BeginSeed(Mode.Arcade, seed);
+                SkipArrival(view);
+                while (!view.State.Over && PickRandom(view.State, ref rng, out int slot, out int place))
+                    PlaceThroughView(view, slot, place);
+                if (!view.State.Over || !view.State.CanUndo) continue;
+
+                int over = view.State.Score;
+                if (PlayerPrefs.GetInt("best.arcade", 0) != over)
+                    throw new InvalidOperationException("Arcade game over did not save the record.");
+                Robot.Undo();
+                SkipArrival(view);
+                int kept = PlayerPrefs.GetInt("best.arcade", 0);
+                if (view.State.Over || kept != view.State.Score)
+                    throw new InvalidOperationException($"Arcade Undo after game over kept record {kept} for score {view.State.Score} (was {over}).");
+                if (GetField<bool>(view, "endRecord"))
+                    throw new InvalidOperationException("Arcade Undo after game over kept the record glow.");
+                return $"Arcade Undo after game over lowers the record from {over} to {kept} (seed {seed}).";
+            }
+            throw new InvalidOperationException("No Arcade game ended with Undo available.");
+        }
+
+        static int Fill(GameView view, ref Rng rng)
+        {
+            SkipArrival(view);
+            while (view.State.Board == 0 && PickRandom(view.State, ref rng, out int slot, out int place))
+                PlaceThroughView(view, slot, place);
+            if (view.State.Board == 0) throw new InvalidOperationException("Could not leave cells on the board.");
+            return Bits.Count(view.State.Board);
+        }
+
+        static ulong DateSeed(DateTime day) => (ulong)(day.Year * 10000 + day.Month * 100 + day.Day);
+
+        static string StaleDaily(ulong seed)
+        {
+            var game = new Game();
+            game.Start(seed, Mode.Daily);
+            var rng = new Rng(5);
+            PickBest(game, ref rng, out int slot, out int place);
+            game.Place(slot, place);
+            return game.Pack();
         }
 
         static void PlaceThroughView(GameView view, int slot, int place)
@@ -452,22 +609,27 @@ namespace Pointless.Editor
             return false;
         }
 
+        static string[] PrefKeys() => new[]
+        {
+            "best.arcade", "best.flow", "best.daily.20261123", "best.daily.20261122",
+            "best.daily." + DateSeed(DateTime.Now), "best.daily." + DateSeed(DateTime.Now.AddDays(-1)),
+            "saved", "saved.arcade", "saved.flow", "saved.daily", "goals", "last_mode", "taught", "flow_hints"
+        };
+
         static Dictionary<string, string> SnapshotPrefs()
         {
-            var keys = new[] { "best.arcade", "best.flow", "best.daily.20261123", "best.daily.20261122", "saved", "taught", "flow_hints" };
             var saved = new Dictionary<string, string>();
-            foreach (string key in keys)
+            foreach (string key in PrefKeys())
             {
                 if (!PlayerPrefs.HasKey(key)) continue;
-                saved[key] = key == "saved" ? "s:" + PlayerPrefs.GetString(key, string.Empty) : "i:" + PlayerPrefs.GetInt(key, 0);
+                saved[key] = key.StartsWith("saved", StringComparison.Ordinal) || key == "goals" ? "s:" + PlayerPrefs.GetString(key, string.Empty) : "i:" + PlayerPrefs.GetInt(key, 0);
             }
             return saved;
         }
 
         static void RestorePrefs(Dictionary<string, string> saved)
         {
-            var keys = new[] { "best.arcade", "best.flow", "best.daily.20261123", "best.daily.20261122", "saved", "taught", "flow_hints" };
-            foreach (string key in keys) PlayerPrefs.DeleteKey(key);
+            foreach (string key in PrefKeys()) PlayerPrefs.DeleteKey(key);
             foreach (var entry in saved)
             {
                 if (entry.Value.StartsWith("s:", StringComparison.Ordinal))

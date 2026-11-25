@@ -34,6 +34,14 @@ Po zmene nastavení projektu alebo scény spusti **Pointless > Set Up Project**.
 
 Ťahanie over v režime Play volaním `Pointless.Editor.Robot.CheckDrag()`. Kontrola overuje mierny odstup nad prstom, nulový odstup od kurzora a ich zachovanie pri krokoch zodpovedajúcich 30, 60 a 120 FPS vrátane zmeny smeru; dielik potom vráti do ponuky.
 
+## Logovanie
+
+- Hra píše do konzoly Unity správy so značkou `Pointless:` cez `Log.Info` a `Log.Warn` v `Assets/Game/View/Log.cs`.
+- `Log.Info` beží len v editore a v development builde (od Unity 6.6 vo variantoch Debug, Checked a Instrumented). V release builde sa volanie aj so skladaním textu vynechá.
+- `Log.Warn` sa píše vždy, aj v release builde: poškodená uložená partia alebo ciele a zlyhané zdieľanie na Androide. V editore aj chýbajúce pole pri **Set Up Project**.
+- Zapisuje sa štart, rozmer obrazovky, nová a obnovená partia, prepnutie režimu, Undo, koniec partie, hviezdy z cieľov, uloženie a zmena nastavení. Nič sa nepíše v každom snímku.
+- Na telefóne: `adb logcat -s Unity` a hľadaj `Pointless:`.
+
 ## Ladenie obťažnosti
 
 Veľkosti dielikov a miera pomoci sú v `Assets/Game/Core/Generator.cs`. Zmenu over simuláciou:

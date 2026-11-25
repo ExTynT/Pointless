@@ -2,7 +2,7 @@ using System;
 
 namespace Pointless.Core
 {
-    // These numbers are part of the p2/p3 save format.
+    // These numbers are part of the p2 to p4 save formats.
     public enum Mode { Arcade = 0, Flow = 1, Daily = 2 }
     public enum UndoPolicy { None, OncePerTrio, Unlimited }
     public enum HintPolicy { None, Tutorial, Optional }

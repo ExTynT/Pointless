@@ -34,11 +34,13 @@ namespace Pointless.Core
         const int ComboCap = 10;
         const int LegacyFields = 17;
         const int SavedV2Fields = LegacyFields + 1;
-        const int SavedFields = LegacyFields + 2;
+        const int SavedV3Fields = LegacyFields + 2;
+        const int SavedFields = LegacyFields + 3;
 
         static readonly string legacyFormat = $"p1.{Shapes.All.Length}.{Lattice.Lines.Length}";
         static readonly string formatV2 = $"p2.{Shapes.All.Length}.{Lattice.Lines.Length}";
-        static readonly string format = $"p3.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string formatV3 = $"p3.{Shapes.All.Length}.{Lattice.Lines.Length}";
+        static readonly string format = $"p4.{Shapes.All.Length}.{Lattice.Lines.Length}";
 
         public ulong Board;
         public int Score;
@@ -185,7 +187,7 @@ namespace Pointless.Core
             for (int slot = 0; slot < Slots; slot++) text.Append(' ').Append(TrayTint[slot]);
             text.Append(' ').Append(Flags(Placed)).Append(' ').Append(Flags(Scored)).Append(' ');
             for (int cell = 0; cell < Lattice.Cells; cell++) text.Append((char)('0' + Tint[cell]));
-            return text.Append(' ').Append((int)Mode).Append(' ').Append(Seed).ToString();
+            return text.Append(' ').Append((int)Mode).Append(' ').Append(Seed).Append(' ').Append(undoSpent ? 1 : 0).ToString();
         }
 
         public bool Unpack(string saved)
@@ -194,12 +196,15 @@ namespace Pointless.Core
             string[] parts = saved.Split(' ');
             Mode mode = Mode.Arcade;
             ulong seed = 0;
-            if (parts.Length == SavedFields && parts[0] == format)
+            bool current = parts.Length == SavedFields && parts[0] == format, spent = false;
+            if (current || parts.Length == SavedV3Fields && parts[0] == formatV3)
             {
                 if (!uint.TryParse(parts[LegacyFields], NumberStyles.None, CultureInfo.InvariantCulture, out uint value)
                     || value > (uint)Mode.Daily) return false;
                 if (!ulong.TryParse(parts[LegacyFields + 1], NumberStyles.None, CultureInfo.InvariantCulture, out seed)) return false;
+                if (current && parts[LegacyFields + 2] != "0" && parts[LegacyFields + 2] != "1") return false;
                 mode = (Mode)value;
+                spent = current && parts[LegacyFields + 2] == "1";
             }
             else if (parts.Length == SavedV2Fields && parts[0] == formatV2)
             {
@@ -247,7 +252,8 @@ namespace Pointless.Core
             }
             for (int cell = 0; cell < Lattice.Cells; cell++) Tint[cell] = (byte)(tints[cell] - '0');
             historyNext = historyCount = 0;
-            undoReady = undoSpent = false;
+            undoReady = false;
+            undoSpent = spent;
             Over = !(Fits(0) || Fits(1) || Fits(2));
             return true;
         }

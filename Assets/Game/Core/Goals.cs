@@ -121,26 +121,34 @@ namespace Pointless.Core
         public string Pack() =>
             $"{(int)Active}|{totals[1]},{totals[2]},{totals[3]}|{stars[1]},{stars[2]},{stars[3]}";
 
-        public void Unpack(string data)
+        public bool Unpack(string data)
         {
             ClearHistory();
-            if (string.IsNullOrEmpty(data)) return;
+            Active = GoalKind.None;
+            Array.Clear(totals, 0, KindCount);
+            Array.Clear(stars, 0, KindCount);
+            if (string.IsNullOrEmpty(data)) return true;
             string[] parts = data.Split('|');
-            if (parts.Length != 3) return;
-            if (int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out int active) && (uint)active < KindCount)
-                Active = (GoalKind)active;
+            if (parts.Length != 3) return false;
+            bool read = int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out int active) && (uint)active < KindCount;
+            if (read) Active = (GoalKind)active;
 
-            ParseTriple(parts[1], totals);
-            ParseTriple(parts[2], stars);
+            read &= ParseTriple(parts[1], totals);
+            read &= ParseTriple(parts[2], stars);
+            return read;
         }
 
-        static void ParseTriple(string csv, int[] target)
+        static bool ParseTriple(string csv, int[] target)
         {
             string[] items = csv.Split(',');
-            if (items.Length != 3) return;
+            if (items.Length != 3) return false;
+            bool read = true;
             for (int i = 0; i < 3; i++)
-                if (int.TryParse(items[i], NumberStyles.None, CultureInfo.InvariantCulture, out int val))
-                    target[i + 1] = val;
+            {
+                if (int.TryParse(items[i], NumberStyles.None, CultureInfo.InvariantCulture, out int val)) target[i + 1] = val;
+                else read = false;
+            }
+            return read;
         }
     }
 }
