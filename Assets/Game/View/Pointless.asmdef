@@ -3,7 +3,8 @@
     "rootNamespace": "Pointless",
     "references": [
         "Pointless.Core",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

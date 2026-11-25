@@ -131,8 +131,12 @@ namespace Pointless.Editor
                 string effectsReport = CheckSwitchClearsEffects(view);
                 string trioReport = CheckUndoOncePerTrio(view);
                 string recordReport = CheckUndoAfterGameOver(view);
+                string menuReport = CheckMenuTaps(view);
+                string helpReport = CheckHelpCard(view);
+                string attemptReport = CheckDailyOneAttempt(view);
+                string tripleReport = CheckTripleClear(view);
 
-                string summary = $"{dailyReport}\n{previewReport}\n{undoReport}\n{shareReport}\n{expiryReport}\n{switchReport}\n{freshReport}\n{effectsReport}\n{trioReport}\n{recordReport}";
+                string summary = $"{dailyReport}\n{previewReport}\n{undoReport}\n{shareReport}\n{expiryReport}\n{switchReport}\n{freshReport}\n{effectsReport}\n{trioReport}\n{recordReport}\n{menuReport}\n{helpReport}\n{attemptReport}\n{tripleReport}";
                 Log.Info(summary);
                 return summary;
             }
@@ -326,7 +330,7 @@ namespace Pointless.Editor
 
             GUIUtility.systemCopyBuffer = string.Empty;
             string copied = Robot.Share();
-            string expected = $"Pointless Daily 2026-11-23\nSkóre: {game.Score}\nLínie: {game.Lines}\nMax Kombo: {game.MaxCombo}";
+            string expected = $"Pointless Daily 2026-11-23\nPerfect Trio: {game.Perfects}\nSkóre: {game.Score}\nLínie: {game.Lines}\nMax Kombo: {game.MaxCombo}";
             if (copied != expected)
                 throw new InvalidOperationException($"Share clipboard mismatch.\nExpected:\n{expected}\nActual:\n{copied}");
 
@@ -356,6 +360,7 @@ namespace Pointless.Editor
         static string CheckDailyExpiry(GameView view)
         {
             ulong today = DateSeed(DateTime.Now), yesterday = DateSeed(DateTime.Now.AddDays(-1));
+            PlayerPrefs.DeleteKey("daily.final");
             view.BeginSeed(Mode.Arcade, 4321);
             SkipArrival(view);
             view.enabled = false;
@@ -376,6 +381,7 @@ namespace Pointless.Editor
             ulong today = DateSeed(DateTime.Now), yesterday = DateSeed(DateTime.Now.AddDays(-1));
             string key = "best.daily." + yesterday;
             var rng = new Rng(23);
+            PlayerPrefs.DeleteKey("daily.final");
             PlayerPrefs.SetInt("best.arcade", 9999);
             PlayerPrefs.SetInt(key, 100);
             view.BeginSeed(Mode.Arcade, 4321);
@@ -505,6 +511,222 @@ namespace Pointless.Editor
             return game.Pack();
         }
 
+        static string CheckMenuTaps(GameView view)
+        {
+            float side = GetField<float>(view, "side");
+            float reach = 2f * side * (float)typeof(GameView).GetField("ButtonReach", BindingFlags.Static | BindingFlags.NonPublic).GetValue(null);
+            Vector2 menu = GetField<Vector2>(view, "modeButtonAt"), undo = GetField<Vector2>(view, "undoAt");
+            Vector2 sound = GetField<Vector2>(view, "soundAt"), help = GetField<Vector2>(view, "helpAt"), hint = GetField<Vector2>(view, "hintButtonAt");
+            float closest = Mathf.Min(Mathf.Min((menu - undo).magnitude, (sound - help).magnitude), (help - hint).magnitude);
+            if (closest < reach)
+                throw new InvalidOperationException($"Top buttons are {closest / side:0.00} side apart, tap areas need {reach / side:0.00}.");
+
+            var rng = new Rng(43);
+            view.BeginSeed(Mode.Arcade, 99);
+            SkipArrival(view);
+            int lastSlot = -1, lastPlace = -1;
+            for (int move = 0; move < 400 && !view.State.Over; move++)
+            {
+                if (!PickRandom(view.State, ref rng, out lastSlot, out lastPlace)) break;
+                PlaceThroughView(view, lastSlot, lastPlace);
+            }
+            if (!view.State.Over) throw new InvalidOperationException("Arcade test game did not end.");
+            if (view.State.CanUndo)
+            {
+                view.Press(undo);
+                view.Release();
+                PlaceThroughView(view, lastSlot, lastPlace);
+            }
+            if (!view.State.Over || view.State.CanUndo)
+                throw new InvalidOperationException("Could not reach a game over with Undo already spent.");
+            SetField(view, "overAt", GetField<float>(view, "now") - 2f);
+            string over = view.State.Pack();
+            view.Press(undo);
+            view.Release();
+            if (view.State.Pack() != over || !view.State.Over || GetField<float>(view, "deniedAt") != GetField<float>(view, "now"))
+                throw new InvalidOperationException("Tapping the dimmed Undo at game over changed or restarted the game, or gave no feedback.");
+
+            var themeBefore = Theme.Current;
+            var goalBefore = view.Goals.Active;
+            var modes = GetField<Vector2[]>(view, "menuModeAt");
+            var themes = GetField<Vector2[]>(view, "menuThemeAt");
+            var goals = GetField<Vector2[]>(view, "menuGoalAt");
+
+            view.Press(menu);
+            if (!GetField<bool>(view, "menuOpen")) throw new InvalidOperationException("The mode button did not open the menu.");
+            for (int i = 0; i < themes.Length; i++)
+            {
+                view.Press(themes[i]);
+                if ((int)Theme.Current != i || !GetField<bool>(view, "menuOpen"))
+                    throw new InvalidOperationException($"Theme {i} tap failed or closed the menu.");
+            }
+            for (int i = 0; i < goals.Length; i++)
+            {
+                view.Press(goals[i] - new Vector2(0f, side * 0.95f));
+                if ((int)view.Goals.Active != i || !GetField<bool>(view, "menuOpen"))
+                    throw new InvalidOperationException($"Goal {i} star count tap failed or closed the menu.");
+            }
+            view.Press(themes[(int)themeBefore]);
+            view.Press(goals[(int)goalBefore]);
+
+            foreach (Mode mode in new[] { Mode.Flow, Mode.Daily, Mode.Arcade })
+            {
+                if (!GetField<bool>(view, "menuOpen")) view.Press(menu);
+                view.Press(modes[(int)mode] - new Vector2(0f, mode == Mode.Daily ? side * 1.2f : 0f));
+                if (view.State.Mode != mode || GetField<bool>(view, "menuOpen"))
+                    throw new InvalidOperationException($"Tapping {mode} in the menu did not switch and close.");
+            }
+
+            view.Press(menu);
+            view.Press(new Vector2(0f, -GetField<float>(view, "high") * 0.45f));
+            if (GetField<bool>(view, "menuOpen") || view.State.Mode != Mode.Arcade || Theme.Current != themeBefore || view.Goals.Active != goalBefore)
+                throw new InvalidOperationException("Tapping outside the menu did not just close it.");
+            return $"Menu: top buttons {closest / side:0.00} side apart (tap areas {reach / side:0.00}), dimmed Undo at game over does nothing, Flow, Daily and Arcade, every theme and goal react to a tap, labels under modes and goals count as the item, outside tap closes.";
+        }
+
+        static string CheckTripleClear(GameView view)
+        {
+            view.BeginSeed(Mode.Flow, 2024);
+            SkipArrival(view);
+            Game game = view.State;
+            for (int cell = 0; cell < Lattice.Cells; cell++)
+            {
+                ulong bit = 1UL << cell, full = 0;
+                uint through = 0;
+                for (int line = 0; line < Lattice.Lines.Length; line++)
+                {
+                    if ((Lattice.Lines[line] & bit) == 0) continue;
+                    through |= 1u << line;
+                    full |= Lattice.Lines[line];
+                }
+                if ((through & Lattice.Family[0]) == 0 || (through & Lattice.Family[1]) == 0 || (through & Lattice.Family[2]) == 0) continue;
+                int id = -1, place = -1;
+                for (int shape = 0; shape < Shapes.All.Length && id < 0; shape++)
+                {
+                    if (Shapes.All[shape].Size != 1) continue;
+                    int found = Array.IndexOf(Shapes.All[shape].Mask, bit);
+                    if (found < 0) continue;
+                    id = shape;
+                    place = found;
+                }
+                if (id < 0) continue;
+
+                game.Board = full & ~bit;
+                game.Tray[0] = id;
+                int score = game.Score, triples = game.Triples;
+                PlaceThroughView(view, 0, place);
+                int gold = 0, count = GetField<int>(view, "sweepCount");
+                var sweeps = GetField<Array>(view, "sweeps");
+                for (int i = 0; i < count; i++)
+                {
+                    object sweep = sweeps.GetValue(i);
+                    if ((bool)sweep.GetType().GetField("Gold").GetValue(sweep)) gold++;
+                }
+                if (game.Triples != triples + 1 || game.Score - score < Game.TripleBonus || gold < 3)
+                    throw new InvalidOperationException($"A triple clear at cell {cell} gave triples {game.Triples - triples}, +{game.Score - score}, {gold} gold flashes.");
+                var copy = new Game();
+                if (!copy.Unpack(game.Pack()) || copy.Triples != game.Triples || copy.Perfects != game.Perfects)
+                    throw new InvalidOperationException("The save lost the triple or Perfect Trio count.");
+                return $"Triple: one triangle at cell {cell} cleared all three directions, +{game.Score - score} with the bonus {Game.TripleBonus}, {gold} gold line flashes, the count survives a save.";
+            }
+            throw new InvalidOperationException("No single triangle can close lines in all three directions.");
+        }
+
+        static string CheckDailyOneAttempt(GameView view)
+        {
+            ulong today = DateSeed(DateTime.Now), yesterday = DateSeed(DateTime.Now.AddDays(-1));
+            var rng = new Rng(57);
+            PlayerPrefs.DeleteKey("daily.final");
+            view.SwitchMode(Mode.Arcade);
+            PlayToEnd(view, Mode.Daily, today, ref rng);
+            var final = new Game();
+            if (!final.Unpack(PlayerPrefs.GetString("daily.final", string.Empty)) || final.Seed != today || final.Score != view.State.Score)
+                throw new InvalidOperationException("The finished Daily was not kept as today's result.");
+
+            string done = view.State.Pack();
+            SetField(view, "overAt", GetField<float>(view, "now") - 2f);
+            view.Press(Vector2.zero);
+            view.Release();
+            if (!GetField<bool>(view, "menuOpen") || view.State.Pack() != done)
+                throw new InvalidOperationException("A tap after today's Daily started another attempt instead of opening the menu.");
+            Invoke(view, "Step", 1f);
+            Invoke(view, "Draw");
+            string leak = VisibleEndLabel(view);
+            if (leak != null) throw new InvalidOperationException($"The end screen label '{leak}' shows through the menu.");
+            view.Press(new Vector2(0f, -GetField<float>(view, "high") * 0.45f));
+
+            view.SwitchMode(Mode.Arcade);
+            view.SwitchMode(Mode.Daily);
+            if (!view.State.Over || view.State.Seed != today || view.State.Score != final.Score)
+                throw new InvalidOperationException("Coming back to Daily did not show today's result.");
+            view.enabled = false;
+            view.enabled = true;
+            if (!view.State.Over || view.State.Seed != today || view.State.Score != final.Score)
+                throw new InvalidOperationException("A restart did not show today's Daily result.");
+
+            view.SwitchMode(Mode.Arcade);
+            PlayToEnd(view, Mode.Daily, yesterday, ref rng);
+            view.SwitchMode(Mode.Arcade);
+            view.SwitchMode(Mode.Daily);
+            SkipArrival(view);
+            if (view.State.Over || view.State.Seed != today)
+                throw new InvalidOperationException("Yesterday's result locked today's Daily.");
+            return $"Daily: one attempt per day, the result {final.Score} stays, a tap opens the menu, coming back and a restart show the result, yesterday's result does not lock today.";
+        }
+
+        static string VisibleEndLabel(GameView view)
+        {
+            object labels = GetField<object>(view, "labels");
+            var pool = (Array)labels.GetType().GetField("pool", Private).GetValue(labels);
+            string[] end = { "línie", "max kombo", "zdieľať", "nová hra", "rekord", "ťukni a vyber iný režim" };
+            foreach (object item in pool)
+            {
+                var label = (Component)item;
+                if (!label.gameObject.activeSelf) continue;
+                var text = (string)label.GetType().GetProperty("text").GetValue(label);
+                if (Array.IndexOf(end, text) >= 0 || text.StartsWith("ďalšia", StringComparison.Ordinal)) return text;
+            }
+            return null;
+        }
+
+        static void PlayToEnd(GameView view, Mode mode, ulong seed, ref Rng rng)
+        {
+            view.BeginSeed(mode, seed);
+            SkipArrival(view);
+            for (int move = 0; move < 400 && !view.State.Over; move++)
+            {
+                if (!PickRandom(view.State, ref rng, out int slot, out int place)) break;
+                PlaceThroughView(view, slot, place);
+            }
+            if (!view.State.Over) throw new InvalidOperationException($"{mode} {seed} did not end.");
+        }
+
+        static string CheckHelpCard(GameView view)
+        {
+            Vector2 help = GetField<Vector2>(view, "helpAt");
+            foreach (Mode mode in new[] { Mode.Flow, Mode.Daily, Mode.Arcade })
+            {
+                view.SwitchMode(mode);
+                SkipArrival(view);
+                PlayerPrefs.DeleteKey("help_seen");
+                SetField(view, "helpSeen", 0);
+                string before = view.State.Pack();
+                view.Press(help);
+                view.Release();
+                if (!GetField<bool>(view, "helpOpen") || (PlayerPrefs.GetInt("help_seen", 0) & (1 << (int)mode)) == 0)
+                    throw new InvalidOperationException($"The question mark did not open the {mode} card or did not remember it.");
+                Invoke(view, "Step", 1f);
+                Invoke(view, "Draw");
+                if (mode == Mode.Flow) Robot.Shoot($"{ScreenshotDir}/help-flow.png");
+                view.Press(view.SlotPoint(0));
+                view.Release();
+                if (GetField<bool>(view, "helpOpen") || view.State.Pack() != before || GetField<int>(view, "held") >= 0)
+                    throw new InvalidOperationException($"Closing the {mode} card changed the game or picked up a piece.");
+                Invoke(view, "Step", 1f);
+            }
+            return "Help: the question mark opens the card of Flow, Daily and Arcade, remembers it, and the closing tap does not touch the game.";
+        }
+
         static void PlaceThroughView(GameView view, int slot, int place)
         {
             SkipArrival(view);
@@ -613,7 +835,7 @@ namespace Pointless.Editor
         {
             "best.arcade", "best.flow", "best.daily.20261123", "best.daily.20261122",
             "best.daily." + DateSeed(DateTime.Now), "best.daily." + DateSeed(DateTime.Now.AddDays(-1)),
-            "saved", "saved.arcade", "saved.flow", "saved.daily", "goals", "last_mode", "taught", "flow_hints"
+            "saved", "saved.arcade", "saved.flow", "saved.daily", "goals", "last_mode", "taught", "flow_hints", "theme", "mute", "help_seen", "daily.final"
         };
 
         static Dictionary<string, string> SnapshotPrefs()
