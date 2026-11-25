@@ -93,6 +93,11 @@ namespace Pointless
         const string GoalsKey = "goals";
         const string HelpSeenKey = "help_seen";
         const string DailyFinalKey = "daily.final";
+        const string PlayersKey = "players";
+        const string PlayerKey = "player";
+        const string FirstPlayer = "Hráč";
+        const int MaxPlayers = 8;
+        const int NameLength = 16;
 
         struct Dying
         {
@@ -143,8 +148,13 @@ namespace Pointless
         readonly char[] text = new char[12];
         readonly Goals goals = new Goals();
         public Goals Goals => goals;
-        bool menuOpen, helpOpen;
-        float menuVeil, helpVeil;
+        bool menuOpen, helpOpen, playersOpen, typing;
+        float menuVeil, helpVeil, playersVeil, gameStartAt, actionAt, pickAt, overlayAt;
+        int player, gameNumber;
+        string[] players = { FirstPlayer };
+        string typed = string.Empty, toastName;
+        TouchScreenKeyboard keyboard;
+        Stats stats;
         int helpSeen;
         Vector2 modeButtonAt;
         readonly Vector2[] menuModeAt = new Vector2[3];
@@ -161,13 +171,13 @@ namespace Pointless
         float high, side, rise, cellHalf, apexY, trayY, slotGap, scoreY, bestY, pipY, endY, lift, veil;
         int endLines, endCombo;
         bool endRecord, feted;
-        Vector2 undoAt, soundAt, helpAt, hintButtonAt, streakAt, shareAt, tapped;
+        Vector2 undoAt, soundAt, helpAt, hintButtonAt, streakAt, shareAt, playerAt, tapped;
         int held = -1, snap = -1, hintSlot = -1, hintPlace;
         Vector2 aim, dropFrom;
         ulong ghost, doomed, dropMask;
         int dyingCount, sweepCount, shardCount, popupCount;
         float now, busyUntil, shown, idleAt, hintAt, dropAt, scoreHit, streakHit, bestHit, shakeAt, shakeSize, overAt, perfectAt, copiedAt, tappedAt, deniedAt, starAt, modeShownAt;
-        int best, record, nextMinutes = -1;
+        int best, record, moveCount, hovers, nextMinutes = -1;
         string nextLabel = string.Empty;
         bool pressed, dirty, taught, beaten, flowHints;
 
@@ -184,58 +194,85 @@ namespace Pointless
             batch = new Batch();
             surface.sharedMesh = batch.Mesh;
             labels = new Labels(surface.transform, 24, surface.GetComponent<Renderer>().sortingOrder + 1);
-            sfx = new Sfx(gameObject) { Muted = PlayerPrefs.GetInt(MuteKey, 0) == 1 };
-
-            Theme.Use((ThemeId)PlayerPrefs.GetInt(ThemeKey, 0));
-            if (view != null) view.backgroundColor = Theme.Back;
-
+            sfx = new Sfx(gameObject);
+            stats = new Stats();
             Haptics.Start();
-            if (PlayerPrefs.HasKey(LegacyBestKey))
-            {
-                int legacy = PlayerPrefs.GetInt(LegacyBestKey, 0), arcade = PlayerPrefs.GetInt(ArcadeBestKey, 0);
-                bool higher = legacy > arcade;
-                if (higher) PlayerPrefs.SetInt(ArcadeBestKey, legacy);
-                PlayerPrefs.DeleteKey(LegacyBestKey);
-                PlayerPrefs.Save();
-                Log.Info(higher ? $"Moved legacy best {legacy} to Arcade" : $"Dropped legacy best {legacy}, kept Arcade best {arcade}");
-            }
-
-            if (PlayerPrefs.HasKey(SavedKey))
-            {
-                string oldSave = PlayerPrefs.GetString(SavedKey, string.Empty);
-                var old = new Game();
-                Mode oldMode = old.Unpack(oldSave) ? old.Mode : Mode.Arcade;
-                bool moved = !string.IsNullOrEmpty(oldSave) && !PlayerPrefs.HasKey(SavedKeyFor(oldMode));
-                if (moved) PlayerPrefs.SetString(SavedKeyFor(oldMode), oldSave);
-                PlayerPrefs.DeleteKey(SavedKey);
-                PlayerPrefs.Save();
-                Log.Info(moved ? $"Moved legacy save to {oldMode}" : $"Dropped legacy save, {oldMode} already has one");
-            }
-            
-            string goalsData = PlayerPrefs.GetString(GoalsKey, string.Empty);
-            if (!goals.Unpack(goalsData)) Log.Warn($"Goals data damaged: {goalsData}");
-            flowHints = PlayerPrefs.GetInt(FlowHintKey, 0) == 1;
-            helpSeen = PlayerPrefs.GetInt(HelpSeenKey, 0);
-            taught = PlayerPrefs.GetInt(TaughtKey, 0) == 1;
-            Log.Info($"Start {Application.version} on {SystemInfo.deviceModel}, {Application.targetFrameRate} fps, theme {Theme.Current}, sound {(sfx.Muted ? "off" : "on")}, goal {goals.Active}");
             chance = new Rng((ulong)DateTime.UtcNow.Ticks);
             now = Time.unscaledTime;
             copiedAt = scoreHit = streakHit = bestHit = shakeAt = perfectAt = dropAt = tappedAt = deniedAt = starAt = modeShownAt = now - 10f;
             pixelsWide = pixelsHigh = 0;
             Fit();
-            Open((Mode)Mathf.Clamp(PlayerPrefs.GetInt(LastModeKey, 0), 0, 2));
+            stats.Write(new Stat { ev = "session", info = $"{Application.version} | {SystemInfo.deviceModel} | {SystemInfo.operatingSystem} | {Screen.width}x{Screen.height}", value = Application.targetFrameRate });
+            LoadPlayer();
+        }
+
+        void LoadPlayer()
+        {
+            players = PlayerPrefs.GetString(PlayersKey, FirstPlayer).Split('\n');
+            player = Mathf.Clamp(PlayerPrefs.GetInt(PlayerKey, 0), 0, players.Length - 1);
+            stats.Player = players[player];
+            stats.PlayerIndex = player;
+            sfx.Muted = PlayerPrefs.GetInt(Key(MuteKey), 0) == 1;
+            Theme.Use((ThemeId)PlayerPrefs.GetInt(Key(ThemeKey), 0));
+            if (view != null) view.backgroundColor = Theme.Back;
+
+            if (PlayerPrefs.HasKey(Key(LegacyBestKey)))
+            {
+                int legacy = PlayerPrefs.GetInt(Key(LegacyBestKey), 0), arcade = PlayerPrefs.GetInt(Key(ArcadeBestKey), 0);
+                bool higher = legacy > arcade;
+                if (higher) PlayerPrefs.SetInt(Key(ArcadeBestKey), legacy);
+                PlayerPrefs.DeleteKey(Key(LegacyBestKey));
+                PlayerPrefs.Save();
+                Log.Info(higher ? $"Moved legacy best {legacy} to Arcade" : $"Dropped legacy best {legacy}, kept Arcade best {arcade}");
+            }
+
+            if (PlayerPrefs.HasKey(Key(SavedKey)))
+            {
+                string oldSave = PlayerPrefs.GetString(Key(SavedKey), string.Empty);
+                var old = new Game();
+                Mode oldMode = old.Unpack(oldSave) ? old.Mode : Mode.Arcade;
+                bool moved = !string.IsNullOrEmpty(oldSave) && !PlayerPrefs.HasKey(Key(SavedKeyFor(oldMode)));
+                if (moved) PlayerPrefs.SetString(Key(SavedKeyFor(oldMode)), oldSave);
+                PlayerPrefs.DeleteKey(Key(SavedKey));
+                PlayerPrefs.Save();
+                Log.Info(moved ? $"Moved legacy save to {oldMode}" : $"Dropped legacy save, {oldMode} already has one");
+            }
+            
+            string goalsData = PlayerPrefs.GetString(Key(GoalsKey), string.Empty);
+            if (!goals.Unpack(goalsData)) Log.Warn($"Goals data damaged: {goalsData}");
+            flowHints = PlayerPrefs.GetInt(Key(FlowHintKey), 0) == 1;
+            helpSeen = PlayerPrefs.GetInt(Key(HelpSeenKey), 0);
+            taught = PlayerPrefs.GetInt(Key(TaughtKey), 0) == 1;
+            Log.Info($"Start {Application.version} on {SystemInfo.deviceModel}, player {players[player]}, {Application.targetFrameRate} fps, theme {Theme.Current}, sound {(sfx.Muted ? "off" : "on")}, goal {goals.Active}");
+            stats.Write(new Stat { ev = "player", value = player, info = $"theme {Theme.Current}, sound {(sfx.Muted ? "off" : "on")}, goal {goals.Active}, hints {(flowHints ? "on" : "off")}" });
+            Open((Mode)Mathf.Clamp(PlayerPrefs.GetInt(Key(LastModeKey), 0), 0, 2));
+        }
+
+        string Key(string key) => player == 0 ? key : $"p{player}.{key}";
+
+        static int Ms(float seconds) => Mathf.RoundToInt(seconds * 1000f);
+
+        string ModeTag => game.Mode.ToString();
+
+        void OnApplicationQuit()
+        {
+            stats?.Write(new Stat { ev = "quit", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score, over = game.Over });
         }
 
         void OnDisable()
         {
+            StopTyping();
             Store();
             sfx?.Dispose();
             batch?.Dispose();
             labels?.Dispose();
+            stats?.Dispose();
         }
 
         void OnApplicationPause(bool paused)
         {
+            Log.Info(paused ? "Paused" : "Resumed");
+            stats?.Write(new Stat { ev = paused ? "pause" : "resume", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score });
             if (paused) Store();
         }
 
@@ -248,7 +285,7 @@ namespace Pointless
             Step(Mathf.Min(now - before, 0.05f));
             Guide();
 
-            bool busy = held >= 0 || now < busyUntil || game.Over || menuOpen || menuVeil > 0f || helpOpen || helpVeil > 0f;
+            bool busy = held >= 0 || now < busyUntil || game.Over || menuOpen || menuVeil > 0f || helpOpen || helpVeil > 0f || playersOpen || playersVeil > 0f;
             OnDemandRendering.renderFrameInterval = busy ? 1 : IdleInterval;
             if (!busy && !dirty) return;
             dirty = false;
@@ -260,9 +297,16 @@ namespace Pointless
             Busy(0.3f);
             idleAt = now;
             hintSlot = -1;
+            if (playersOpen)
+            {
+                PressPlayers(at);
+                return;
+            }
             if (helpOpen)
             {
                 helpOpen = false;
+                Log.Info("Help closed");
+                stats.Write(new Stat { ev = "help_close", mode = ModeTag, duration = Ms(now - overlayAt) });
                 sfx.Back();
                 return;
             }
@@ -285,7 +329,8 @@ namespace Pointless
             {
                 flowHints = !flowHints;
                 Log.Info($"Flow hints {(flowHints ? "on" : "off")}");
-                PlayerPrefs.SetInt(FlowHintKey, flowHints ? 1 : 0);
+                stats.Write(new Stat { ev = "hints", mode = ModeTag, value = flowHints ? 1 : 0 });
+                PlayerPrefs.SetInt(Key(FlowHintKey), flowHints ? 1 : 0);
                 PlayerPrefs.Save();
                 Tap(hintButtonAt);
                 sfx.Pick();
@@ -295,7 +340,8 @@ namespace Pointless
             {
                 sfx.Muted = !sfx.Muted;
                 Log.Info($"Sound {(sfx.Muted ? "off" : "on")}");
-                PlayerPrefs.SetInt(MuteKey, sfx.Muted ? 1 : 0);
+                stats.Write(new Stat { ev = "sound", value = sfx.Muted ? 0 : 1 });
+                PlayerPrefs.SetInt(Key(MuteKey), sfx.Muted ? 1 : 0);
                 Tap(soundAt);
                 sfx.Pick();
                 return;
@@ -310,6 +356,8 @@ namespace Pointless
                 else
                 {
                     deniedAt = now;
+                    Log.Info("Undo not available");
+                    stats.Write(new Stat { ev = "undo_denied", mode = ModeTag, game = gameNumber, move = moveCount, over = game.Over });
                     Haptics.Tick();
                 }
                 return;
@@ -326,6 +374,7 @@ namespace Pointless
                     Haptics.Click();
                     Busy(2.2f);
                     Log.Info("Daily share text\n" + shareText);
+                    stats.Write(new Stat { ev = "share", mode = ModeTag, game = gameNumber, score = game.Score, perfects = game.Perfects, info = FormatSeedDate(game.Seed) });
                     return;
                 }
                 if (now <= overAt + RestartWait) return;
@@ -339,6 +388,10 @@ namespace Pointless
                 Vector2 home = Home(slot);
                 if (Mathf.Abs(at.x - home.x) > slotGap * 0.5f || Mathf.Abs(at.y - home.y) > side * 1.6f) continue;
                 held = slot;
+                Log.Info($"Pick slot {slot}, shape {game.Tray[slot]}");
+                pickAt = now;
+                hovers = 0;
+                stats.Write(new Stat { ev = "pick", mode = ModeTag, game = gameNumber, move = moveCount, slot = slot, shape = game.Tray[slot], size = Shapes.All[game.Tray[slot]].Size, think = Ms(now - actionAt) });
                 snap = -1;
                 ghost = doomed = 0;
                 lift = touch ? TouchLift * side : 0f;
@@ -351,12 +404,25 @@ namespace Pointless
 
         void PressMenu(Vector2 at)
         {
+            if (Mathf.Abs(at.x - playerAt.x) < side * 2.6f && Mathf.Abs(at.y - playerAt.y) < side * 0.55f)
+            {
+                Tap(playerAt);
+                menuOpen = false;
+                playersOpen = true;
+                overlayAt = now;
+                Log.Info("Players opened");
+                stats.Write(new Stat { ev = "players_open", value = players.Length });
+                sfx.Pick();
+                Haptics.Click();
+                return;
+            }
             for (int i = 0; i < 3; i++)
             {
                 if (Hit(at, menuModeAt[i], 0.8f) || HitLabel(at, menuModeAt[i], 1.42f, 1f, 0.5f))
                 {
                     Tap(menuModeAt[i]);
                     menuOpen = false;
+                    if ((Mode)i == game.Mode) Log.Info("Menu closed");
                     SwitchMode((Mode)i);
                     sfx.Pick();
                     Haptics.Click();
@@ -366,8 +432,9 @@ namespace Pointless
                 {
                     Theme.Use((ThemeId)i);
                     Log.Info($"Theme {Theme.Current}");
+                    stats.Write(new Stat { ev = "theme", value = i, info = Theme.Current.ToString() });
                     if (view != null) view.backgroundColor = Theme.Back;
-                    PlayerPrefs.SetInt(ThemeKey, i);
+                    PlayerPrefs.SetInt(Key(ThemeKey), i);
                     PlayerPrefs.Save();
                     Tap(menuThemeAt[i]);
                     dirty = true;
@@ -381,7 +448,8 @@ namespace Pointless
                 if (!Hit(at, menuGoalAt[i], 0.65f) && !HitLabel(at, menuGoalAt[i], 1.18f, 0.65f, 0.45f)) continue;
                 goals.Select((GoalKind)i);
                 Log.Info($"Goal {goals.Active}");
-                PlayerPrefs.SetString(GoalsKey, goals.Pack());
+                stats.Write(new Stat { ev = "goal", value = i, info = goals.Active.ToString() });
+                PlayerPrefs.SetString(Key(GoalsKey), goals.Pack());
                 PlayerPrefs.Save();
                 Tap(menuGoalAt[i]);
                 dirty = true;
@@ -390,15 +458,20 @@ namespace Pointless
                 return;
             }
             menuOpen = false;
+            Log.Info("Menu closed");
+            stats.Write(new Stat { ev = "menu_close", mode = ModeTag, duration = Ms(now - overlayAt) });
             sfx.Back();
         }
 
         void OpenMenu()
         {
             menuOpen = true;
-            menuBest[(int)Mode.Arcade] = PlayerPrefs.GetInt(ArcadeBestKey, 0);
-            menuBest[(int)Mode.Flow] = PlayerPrefs.GetInt(FlowBestKey, 0);
-            menuBest[(int)Mode.Daily] = PlayerPrefs.GetInt(DailyBestPrefix + TodaySeed(), 0);
+            overlayAt = now;
+            Log.Info("Menu opened");
+            stats.Write(new Stat { ev = "menu_open", mode = ModeTag });
+            menuBest[(int)Mode.Arcade] = PlayerPrefs.GetInt(Key(ArcadeBestKey), 0);
+            menuBest[(int)Mode.Flow] = PlayerPrefs.GetInt(Key(FlowBestKey), 0);
+            menuBest[(int)Mode.Daily] = PlayerPrefs.GetInt(Key(DailyBestPrefix + TodaySeed()), 0);
             if (game.Mode != Mode.Daily || game.Seed == TodaySeed())
                 menuBest[(int)game.Mode] = Mathf.Max(menuBest[(int)game.Mode], best);
             Tap(modeButtonAt);
@@ -409,14 +482,24 @@ namespace Pointless
         void OpenHelp()
         {
             helpOpen = true;
+            overlayAt = now;
+            stats.Write(new Stat { ev = "help_open", mode = ModeTag, value = (helpSeen & (1 << (int)game.Mode)) == 0 ? 1 : 0 });
             helpSeen |= 1 << (int)game.Mode;
-            PlayerPrefs.SetInt(HelpSeenKey, helpSeen);
+            PlayerPrefs.SetInt(Key(HelpSeenKey), helpSeen);
             PlayerPrefs.Save();
             Log.Info($"Help {game.Mode}");
             Tap(helpAt);
             sfx.Pick();
             Haptics.Click();
         }
+
+        void LogTrio()
+        {
+            Log.Info($"Trio shapes {game.Tray[0]} {game.Tray[1]} {game.Tray[2]}");
+            stats.Write(new Stat { ev = "deal", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score, fill = Bits.Count(game.Board), board = (long)game.Board, tray = TrayText() });
+        }
+
+        string TrayText() => $"{game.Tray[0]} {game.Tray[1]} {game.Tray[2]}";
 
         void Tap(Vector2 button)
         {
@@ -439,16 +522,30 @@ namespace Pointless
             ghost = doomed = 0;
             idleAt = now;
             Busy(0.8f);
-            if (place < 0) sfx.Back();
+            if (place < 0)
+            {
+                Log.Info($"Put back slot {slot}");
+                stats.Write(new Stat { ev = "put_back", mode = ModeTag, game = gameNumber, move = moveCount, slot = slot, drag = Ms(now - pickAt), hovers = hovers });
+                actionAt = now;
+                sfx.Back();
+            }
             else Commit(slot, place);
         }
 
         void Read()
         {
             Keyboard keys = Keyboard.current;
-            if (keys != null && keys.escapeKey.wasPressedThisFrame)
+            bool wasTyping = typing;
+            if (typing) Type(keys);
+            if (keys != null && keys.escapeKey.wasPressedThisFrame && !wasTyping)
             {
+                if (playersOpen || helpOpen || menuOpen)
+                {
+                    CloseOverlays();
+                    return;
+                }
                 Log.Info("Back pressed, saving and quitting");
+                stats.Write(new Stat { ev = "back", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score });
                 Store();
                 Application.Quit();
             }
@@ -514,6 +611,7 @@ namespace Pointless
             for (int i = 0; i < 4; i++)
                 menuGoalAt[i] = new Vector2((i - 1.5f) * 1.95f * side, apexY - 6.4f * side);
             shareAt = new Vector2(0f, endY - 3.3f * side);
+            playerAt = new Vector2(0f, apexY + 0.95f * side);
 
             for (int slot = 0; slot < Game.Slots; slot++)
                 if (slot != held) slotAt[slot] = Home(slot);
@@ -533,12 +631,17 @@ namespace Pointless
 
         void Fresh(Mode mode, ulong seed)
         {
-            PlayerPrefs.SetInt(LastModeKey, (int)mode);
-            PlayerPrefs.DeleteKey(SavedKeyFor(mode));
+            PlayerPrefs.SetInt(Key(LastModeKey), (int)mode);
+            PlayerPrefs.DeleteKey(Key(SavedKeyFor(mode)));
             goals.ClearHistory();
             game.Start(seed, mode);
-            best = PlayerPrefs.GetInt(BestKey(), 0);
+            best = PlayerPrefs.GetInt(Key(BestKey()), 0);
             Log.Info($"New {mode} game, seed {seed}, best {best}");
+            moveCount = 0;
+            gameNumber++;
+            gameStartAt = actionAt = now;
+            stats.Write(new Stat { ev = "game_start", mode = ModeTag, game = gameNumber, best = best, info = seed.ToString() });
+            LogTrio();
             record = best;
             beaten = false;
             shown = 0f;
@@ -549,8 +652,13 @@ namespace Pointless
 
         void Resume()
         {
-            best = Mathf.Max(PlayerPrefs.GetInt(BestKey(), 0), game.Score);
+            best = Mathf.Max(PlayerPrefs.GetInt(Key(BestKey()), 0), game.Score);
             Log.Info($"Resume {game.Mode} game, seed {game.Seed}, score {game.Score}, best {best}");
+            moveCount = 0;
+            gameNumber++;
+            gameStartAt = actionAt = now;
+            stats.Write(new Stat { ev = "game_resume", mode = ModeTag, game = gameNumber, score = game.Score, best = best, perfects = game.Perfects, fill = Bits.Count(game.Board), info = game.Seed.ToString() });
+            LogTrio();
             record = best;
             beaten = record > 0 && game.Score >= record;
             shown = game.Score;
@@ -601,6 +709,8 @@ namespace Pointless
                 if (!slotOpen[slot] || now < slotFrom[slot]) continue;
                 hintPlace = Generator.Best(game.Board, Shapes.All[game.Tray[slot]], ref chance, out _);
                 hintSlot = slot;
+                Log.Info($"Hint slot {slot} at {hintPlace}");
+                stats.Write(new Stat { ev = "hint", mode = ModeTag, game = gameNumber, move = moveCount, slot = slot, shape = game.Tray[slot], place = hintPlace });
                 hintAt = now;
                 return;
             }
@@ -628,6 +738,7 @@ namespace Pointless
             snap = found;
             ghost = doomed = 0;
             if (found < 0) return;
+            hovers++;
             ghost = shape.Mask[found];
             Lattice.Sweep(board | ghost, out doomed, out _);
             Haptics.Tick();
@@ -642,7 +753,11 @@ namespace Pointless
             Move move = game.Place(slot, place);
             int shownStars = goals.Stars;
             int earnedStars = goals.Record(move, canUndoMove);
-            if (earnedStars > 0) Log.Info($"Goal stars +{earnedStars}, {goals.TotalStars} in total");
+            if (earnedStars > 0)
+            {
+                Log.Info($"Goal stars +{earnedStars}, {goals.TotalStars} in total");
+                stats.Write(new Stat { ev = "goal_star", mode = ModeTag, game = gameNumber, move = moveCount, value = goals.TotalStars, info = goals.Active.ToString() });
+            }
             if (goals.Active != GoalKind.None && goals.Stars > shownStars)
             {
                 sfx.Record();
@@ -657,7 +772,7 @@ namespace Pointless
             if (!taught && game.Rules.Hints != HintPolicy.Optional)
             {
                 taught = true;
-                PlayerPrefs.SetInt(TaughtKey, 1);
+                PlayerPrefs.SetInt(Key(TaughtKey), 1);
             }
 
             if (move.Lines > 0)
@@ -695,7 +810,23 @@ namespace Pointless
                 Pop(new Vector2(0f, trayY + side * 1.05f), Game.PerfectBonus, 0.5f, Theme.Gold);
                 sfx.Perfect();
             }
-            if (move.Dealt) Arrive(move.Perfect ? 0.55f : move.Lines > 0 ? 0.3f : 0.12f);
+            moveCount++;
+            Log.Info($"Move {moveCount} {game.Mode}: slot {slot}, shape {shape.Id} at {place}, lines {move.Lines}, +{move.Points}, combo x{move.Combo}{(move.Broke ? " (broken)" : string.Empty)}{(move.Perfect ? $", perfect trio +{Game.PerfectBonus}" : string.Empty)}, score {game.Score}");
+            int fits = (game.Fits(0) ? 1 : 0) + (game.Fits(1) ? 1 : 0) + (game.Fits(2) ? 1 : 0);
+            stats.Write(new Stat
+            {
+                ev = "move", mode = ModeTag, game = gameNumber, move = moveCount, slot = slot, shape = shape.Id, size = shape.Size, place = place,
+                lines = move.Lines, points = move.Points, combo = move.Combo, broke = move.Broke, perfect = move.Perfect, triple = move.Triple,
+                dealt = move.Dealt, over = move.Over, score = game.Score, fill = Bits.Count(game.Board), fits = fits,
+                misses = game.Misses, hovers = hovers, board = (long)game.Board,
+                think = Ms(pickAt - actionAt), drag = Ms(now - pickAt)
+            });
+            actionAt = now;
+            if (move.Dealt)
+            {
+                Arrive(move.Perfect ? 0.55f : move.Lines > 0 ? 0.3f : 0.12f);
+                LogTrio();
+            }
             if (game.Score > best) best = game.Score;
             if (!beaten && record > 0 && game.Score > record && game.Mode != Mode.Daily)
             {
@@ -713,7 +844,14 @@ namespace Pointless
             endRecord = game.Mode != Mode.Daily && game.Score > record;
             feted = false;
             Log.Info($"Game over {game.Mode}: score {game.Score}, lines {endLines}, max combo {endCombo}{(endRecord ? ", new record" : string.Empty)}");
-            if (game.Mode == Mode.Daily) PlayerPrefs.SetString(DailyFinalKey, game.Pack());
+            if (game.Mode == Mode.Daily) PlayerPrefs.SetString(Key(DailyFinalKey), game.Pack());
+            stats.Write(new Stat
+            {
+                ev = "game_over", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score, lines = game.Lines, combo = game.MaxCombo,
+                perfects = game.Perfects, triples = game.Triples, best = record, record = endRecord, fill = Bits.Count(game.Board), duration = Ms(now - gameStartAt),
+                board = (long)game.Board, tray = TrayText(),
+                info = game.Mode == Mode.Daily ? FormatSeedDate(game.Seed) : null
+            });
             sfx.Over(overAt - now);
             Haptics.Thump();
             Store();
@@ -721,16 +859,19 @@ namespace Pointless
 
         void Undo()
         {
+            bool wasOver = game.Over;
             game.Undo();
             goals.Undo();
             Log.Info($"Undo {game.Mode}, score {game.Score}");
+            stats.Write(new Stat { ev = "undo", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score, fill = Bits.Count(game.Board), over = wasOver });
+            actionAt = now;
             best = Mathf.Max(record, game.Score);
             beaten = beaten && game.Score > record;
             // Game over or a pause may already have saved the move we just undid.
             string key = BestKey();
-            if (PlayerPrefs.GetInt(key, 0) > best)
+            if (PlayerPrefs.GetInt(Key(key), 0) > best)
             {
-                PlayerPrefs.SetInt(key, best);
+                PlayerPrefs.SetInt(Key(key), best);
                 Log.Info($"Best lowered to {best} after undo");
             }
             endRecord = feted = false;
@@ -759,16 +900,16 @@ namespace Pointless
         void Keep()
         {
             string key = BestKey();
-            if (best > PlayerPrefs.GetInt(key, 0)) PlayerPrefs.SetInt(key, best);
+            if (best > PlayerPrefs.GetInt(Key(key), 0)) PlayerPrefs.SetInt(Key(key), best);
         }
 
         void Store()
         {
             Keep();
-            PlayerPrefs.SetString(GoalsKey, goals.Pack());
+            PlayerPrefs.SetString(Key(GoalsKey), goals.Pack());
             string key = SavedKeyFor(game.Mode);
-            if (game.Over) PlayerPrefs.DeleteKey(key);
-            else PlayerPrefs.SetString(key, game.Pack());
+            if (game.Over) PlayerPrefs.DeleteKey(Key(key));
+            else PlayerPrefs.SetString(Key(key), game.Pack());
             PlayerPrefs.Save();
             Log.Info(game.Over ? $"Cleared finished {game.Mode} save" : $"Saved {game.Mode} game, score {game.Score}");
         }
@@ -794,7 +935,7 @@ namespace Pointless
 
         bool Played()
         {
-            string final = PlayerPrefs.GetString(DailyFinalKey, string.Empty);
+            string final = PlayerPrefs.GetString(Key(DailyFinalKey), string.Empty);
             return final.Length > 0 && game.Unpack(final) && game.Over && game.Mode == Mode.Daily && game.Seed == TodaySeed();
         }
 
@@ -802,8 +943,8 @@ namespace Pointless
 
         void Review()
         {
-            PlayerPrefs.SetInt(LastModeKey, (int)Mode.Daily);
-            best = Mathf.Max(PlayerPrefs.GetInt(BestKey(), 0), game.Score);
+            PlayerPrefs.SetInt(Key(LastModeKey), (int)Mode.Daily);
+            best = Mathf.Max(PlayerPrefs.GetInt(Key(BestKey()), 0), game.Score);
             record = best;
             beaten = false;
             shown = game.Score;
@@ -822,6 +963,7 @@ namespace Pointless
             Refresh();
             Busy(1f);
             Log.Info($"Daily {game.Seed} already played, score {game.Score}");
+            stats.Write(new Stat { ev = "daily_review", mode = ModeTag, score = game.Score, perfects = game.Perfects, info = FormatSeedDate(game.Seed) });
         }
 
         string NextLabel()
@@ -835,7 +977,7 @@ namespace Pointless
 
         bool Load(Mode mode)
         {
-            string saved = PlayerPrefs.GetString(SavedKeyFor(mode), string.Empty);
+            string saved = PlayerPrefs.GetString(Key(SavedKeyFor(mode)), string.Empty);
             if (game.Unpack(saved)) return true;
             if (saved.Length > 0) Log.Warn($"Dropped unreadable {mode} save: {saved}");
             return false;
@@ -935,6 +1077,19 @@ namespace Pointless
             if (menuVeil != menuGoal)
             {
                 menuVeil = Mathf.MoveTowards(menuVeil, menuGoal, delta / 0.22f);
+                Busy(0.1f);
+            }
+            float playersGoal = playersOpen ? 1f : 0f;
+            if (playersVeil != playersGoal)
+            {
+                playersVeil = Mathf.MoveTowards(playersVeil, playersGoal, delta / 0.22f);
+                Busy(0.1f);
+            }
+            if (typing && keyboard != null)
+            {
+                typed = keyboard.text.Length > NameLength ? keyboard.text.Substring(0, NameLength) : keyboard.text;
+                if (keyboard.status == TouchScreenKeyboard.Status.Done) Confirm();
+                else if (keyboard.status != TouchScreenKeyboard.Status.Visible) CancelTyping();
                 Busy(0.1f);
             }
             float helpGoal = helpOpen ? 1f : 0f;
@@ -1090,6 +1245,7 @@ namespace Pointless
             if (hintSlot >= 0) Hint();
             if (menuVeil > 0f) DrawMenu();
             if (helpVeil > 0f) DrawHelp();
+            if (playersVeil > 0f) DrawPlayers();
 
             if (held >= 0)
                 Piece(Shapes.All[game.Tray[held]], slotAt[held], slotSize[held], Theme.Top[lifted], Theme.Low[lifted]);
@@ -1285,7 +1441,7 @@ namespace Pointless
             }
         }
 
-        float Uncovered() => 1f - Mathf.SmoothStep(0f, 1f, Mathf.Max(menuVeil, helpVeil));
+        float Uncovered() => 1f - Mathf.SmoothStep(0f, 1f, Mathf.Max(Mathf.Max(menuVeil, helpVeil), playersVeil));
 
         void Toast()
         {
@@ -1296,7 +1452,7 @@ namespace Pointless
             var at = new Vector2(0f, apexY - 4.04f * side);
             batch.Dot(at.x, at.y, side * 1.2f * grow, Theme.Fade(Theme.CellTop, 0.92f * fade));
             ModeIcon(game.Mode, at, side * 0.6f * grow, Theme.Fade(Theme.Ink, fade), game.Mode == Mode.Daily ? DayOf(game.Seed) : 0);
-            labels.Put(modeNames[(int)game.Mode], at.x, at.y - 0.85f * side, side * NameSize * grow, Theme.Fade(Theme.Ink, fade * Uncovered() * (1f - veil)));
+            labels.Put(toastName ?? modeNames[(int)game.Mode], at.x, at.y - 0.85f * side, side * NameSize * grow, Theme.Fade(Theme.Ink, fade * Uncovered() * (1f - veil)));
         }
 
         void Hint()
@@ -1419,8 +1575,10 @@ namespace Pointless
         {
             if (target == game.Mode) return;
             Log.Info($"Switch {game.Mode} to {target}");
+            stats.Write(new Stat { ev = "switch", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score, over = game.Over, info = target.ToString() });
+            toastName = null;
             Store();
-            PlayerPrefs.SetInt(LastModeKey, (int)target);
+            PlayerPrefs.SetInt(Key(LastModeKey), (int)target);
             PlayerPrefs.Save();
             Dissolve(0.02f);
             Open(target);
@@ -1443,7 +1601,7 @@ namespace Pointless
 
         void GoalBar()
         {
-            float alpha = (1f - Mathf.SmoothStep(0f, 1f, veil)) * (1f - Mathf.SmoothStep(0f, 1f, Mathf.Max(menuVeil, helpVeil)));
+            float alpha = (1f - Mathf.SmoothStep(0f, 1f, veil)) * (1f - Mathf.SmoothStep(0f, 1f, Mathf.Max(Mathf.Max(menuVeil, helpVeil), playersVeil)));
             if (goals.Active == GoalKind.None || alpha <= 0f) return;
             Color32 dim = Theme.Fade(Theme.Icon, alpha), gold = Theme.Fade(Theme.Gold, alpha);
             float y = trayY + side * GoalRow, half = side * GoalHalf, r = side * 0.042f;
@@ -1467,6 +1625,11 @@ namespace Pointless
             batch.Line(0f, -high, 0f, high, Wide, Theme.Fade(Theme.Back, open));
             Color32 ink = Theme.Fade(Theme.Ink, open), icon = Theme.Fade(Theme.Icon, open), gold = Theme.Fade(Theme.Gold, open);
             float stroke = side * 0.035f;
+
+            Chip(new Vector2(playerAt.x - side * 1.9f, playerAt.y), side * 0.4f * grow, open);
+            Person(new Vector2(playerAt.x - side * 1.9f, playerAt.y), side * 0.2f * grow, icon);
+            labels.Put(players[player], playerAt.x - side * 1.3f, playerAt.y + side * 0.12f, side * NameSize * grow, ink, true);
+            labels.Put("zmeniť hráča", playerAt.x - side * 1.3f, playerAt.y - side * 0.3f, side * CaptionSize * grow, icon, true);
 
             for (int i = 0; i < 3; i++)
             {
@@ -1564,6 +1727,156 @@ namespace Pointless
                 case Sign.Directions: Directions(at.x, at.y, s, tint); break;
             }
             labels.Put(rule, -side * 2.5f, y, side * 0.22f * grow, Theme.Fade(Theme.Ink, alpha), true);
+        }
+
+        void PressPlayers(Vector2 at)
+        {
+            if (typing)
+            {
+                Confirm();
+                return;
+            }
+            int rows = players.Length + (players.Length < MaxPlayers ? 1 : 0);
+            for (int i = 0; i < rows; i++)
+            {
+                if (Mathf.Abs(at.y - PlayerRow(i)) > side * 0.41f || at.x < -side * 3.6f) continue;
+                Tap(new Vector2(-side * 3.1f, PlayerRow(i)));
+                if (i < players.Length) SwitchPlayer(i);
+                else StartTyping();
+                return;
+            }
+            CloseOverlays();
+        }
+
+        float PlayerRow(int i) => side * (4.2f - 0.82f * i);
+
+        void CloseOverlays()
+        {
+            if (playersOpen) stats.Write(new Stat { ev = "players_close", duration = Ms(now - overlayAt) });
+            else if (helpOpen) stats.Write(new Stat { ev = "help_close", mode = ModeTag, duration = Ms(now - overlayAt) });
+            else if (menuOpen) stats.Write(new Stat { ev = "menu_close", mode = ModeTag, duration = Ms(now - overlayAt) });
+            playersOpen = helpOpen = menuOpen = false;
+            Log.Info("Overlays closed");
+            sfx.Back();
+        }
+
+        void StartTyping()
+        {
+            typing = true;
+            typed = string.Empty;
+            Log.Info("Typing a new player");
+            if (TouchScreenKeyboard.isSupported)
+                keyboard = TouchScreenKeyboard.Open(string.Empty, TouchScreenKeyboardType.Default, false, false, false, false, "Meno", NameLength);
+            else if (Keyboard.current != null) Keyboard.current.onTextInput += Typed;
+        }
+
+        void Typed(char letter)
+        {
+            if (!char.IsControl(letter) && typed.Length < NameLength && (typed.Length > 0 || letter != ' ')) typed += letter;
+            dirty = true;
+        }
+
+        void Type(Keyboard keys)
+        {
+            if (keys == null || keyboard != null) return;
+            if (keys.backspaceKey.wasPressedThisFrame && typed.Length > 0) typed = typed.Substring(0, typed.Length - 1);
+            if (keys.enterKey.wasPressedThisFrame || keys.numpadEnterKey.wasPressedThisFrame) Confirm();
+            else if (keys.escapeKey.wasPressedThisFrame) CancelTyping();
+            Busy(0.1f);
+        }
+
+        void StopTyping()
+        {
+            typing = false;
+            keyboard = null;
+            if (Keyboard.current != null) Keyboard.current.onTextInput -= Typed;
+        }
+
+        void CancelTyping()
+        {
+            StopTyping();
+            Log.Info("Typing cancelled");
+        }
+
+        void Confirm()
+        {
+            string name = typed.Trim().Replace('\n', ' ');
+            StopTyping();
+            if (name.Length == 0) return;
+            int index = Array.IndexOf(players, name);
+            if (index < 0)
+            {
+                if (players.Length >= MaxPlayers) return;
+                index = players.Length;
+                PlayerPrefs.SetString(PlayersKey, string.Join("\n", players) + "\n" + name);
+                Log.Info($"New player {name}");
+                stats.Write(new Stat { ev = "player_new", value = index, info = name });
+            }
+            SwitchPlayer(index);
+        }
+
+        void SwitchPlayer(int index)
+        {
+            playersOpen = menuOpen = false;
+            if (index == player)
+            {
+                sfx.Back();
+                return;
+            }
+            Log.Info($"Switch player {players[player]} to {index}");
+            stats.Write(new Stat { ev = "player_switch", mode = ModeTag, game = gameNumber, move = moveCount, score = game.Score, over = game.Over, value = index });
+            Store();
+            Dissolve(0.02f);
+            PlayerPrefs.SetInt(PlayerKey, index);
+            PlayerPrefs.Save();
+            LoadPlayer();
+            toastName = players[player];
+            modeShownAt = now;
+            Busy(ToastTime);
+            sfx.Pick();
+            Haptics.Click();
+        }
+
+        void DrawPlayers()
+        {
+            float open = Mathf.SmoothStep(0f, 1f, playersVeil);
+            float grow = Spring(open);
+            batch.Line(0f, -high, 0f, high, Wide, Theme.Fade(Theme.Back, open));
+            Color32 ink = Theme.Fade(Theme.Ink, open), icon = Theme.Fade(Theme.Icon, open);
+            if (typing)
+            {
+                labels.Put("Meno hráča", 0f, side * 3.2f, side * 0.32f * grow, ink);
+                batch.Line(-side * 3f, side * 1.9f, side * 3f, side * 1.9f, side * 0.45f * grow, Theme.Fade(Theme.CellTop, open));
+                bool caret = (now * 2f) % 2f < 1.2f;
+                labels.Put(caret ? typed + "|" : typed + " ", 0f, side * 1.9f, side * NameSize * grow, ink);
+                labels.Put(keyboard != null ? "potvrď na klávesnici" : "Enter potvrdí, Esc zruší", 0f, side * 1.05f, side * CaptionSize * grow, icon);
+                return;
+            }
+            labels.Put("Hráči", 0f, side * 5.25f, side * 0.32f * grow, ink);
+            for (int i = 0; i < players.Length; i++)
+            {
+                var at = new Vector2(-side * 3.1f, PlayerRow(i));
+                bool active = i == player;
+                Chip(at, side * 0.32f * grow, open);
+                if (active) Ring(at, side * 0.38f * grow, side * 0.03f, ink);
+                Person(at, side * 0.17f * grow, active ? ink : icon);
+                labels.Put(players[i], -side * 2.5f, at.y, side * 0.24f * grow, active ? ink : icon, true);
+            }
+            if (players.Length < MaxPlayers)
+            {
+                var add = new Vector2(-side * 3.1f, PlayerRow(players.Length));
+                Chip(add, side * 0.32f * grow, open);
+                batch.Line(add.x - side * 0.14f, add.y, add.x + side * 0.14f, add.y, side * 0.025f, icon);
+                batch.Line(add.x, add.y - side * 0.14f, add.x, add.y + side * 0.14f, side * 0.025f, icon);
+                labels.Put("nový hráč", -side * 2.5f, add.y, side * 0.24f * grow, icon, true);
+            }
+            labels.Put("ťukni kamkoľvek pre návrat", 0f, PlayerRow(MaxPlayers) - side * 0.4f, side * CaptionSize * grow, icon);
+        }
+
+        void Person(Vector2 at, float s, Color32 tint)
+        {
+            batch.Dot(at.x, at.y + s * 0.38f, s * 0.36f, tint);
+            batch.Line(at.x - s * 0.36f, at.y - s * 0.5f, at.x + s * 0.36f, at.y - s * 0.5f, s * 0.32f, tint);
         }
 
         void Clock(Vector2 at, float s, Color32 tint)

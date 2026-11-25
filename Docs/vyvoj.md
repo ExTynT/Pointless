@@ -97,7 +97,21 @@ Po zmene nastavení projektu alebo scény spusti **Pointless > Set Up Project**.
 - `Log.Info` beží len v editore a v development builde (od Unity 6.6 vo variantoch Debug, Checked a Instrumented). V release builde sa volanie aj so skladaním textu vynechá.
 - `Log.Warn` sa píše vždy, aj v release builde: poškodená uložená partia alebo ciele a zlyhané zdieľanie na Androide. V editore aj chýbajúce pole pri **Set Up Project**.
 - Zapisuje sa štart, rozmer obrazovky, nová a obnovená partia, prepnutie režimu, Undo, koniec partie, hviezdy z cieľov, uloženie a zmena nastavení. Nič sa nepíše v každom snímku.
+- Zapisuje sa aj všetko, čo hráč robí: každý ťah (`Move <n> <režim>: slot, shape at <miesto>, lines, +body, combo, score`, pri Perfect Trio aj bonus), zdvihnutie dielika (`Pick`), vrátenie do ponuky (`Put back`), každá nová trojica (`Trio shapes`), ukážka ťahu (`Hint`), nedostupné Undo, otvorenie a zavretie menu a karty režimu a pauza aplikácie. Z logu sa tak dá prečítať celý priebeh partie.
 - Na telefóne: `adb logcat -s Unity` a hľadaj `Pointless:`.
+
+## Hráči a štatistiky
+
+- **Hráči:** v menu hore je meno hráča a „zmeniť hráča“. Otvorí zoznam (najviac 8 hráčov) a „nový hráč“, kde sa napíše meno. Na telefóne sa otvorí systémová klávesnica, v editore sa píše priamo, Enter potvrdí a Esc zruší. Ťuknutie na meno prepne hráča a na doske sa na chvíľu ukáže jeho meno.
+- Každý hráč má vlastné uložené partie, rekordy, Daily, ciele, tému, zvuk, nápovedu aj videné karty režimov. Prvý hráč používa pôvodné kľúče v `PlayerPrefs`, ďalší majú predponu `p<n>.`. Zoznam mien je v `players` a aktuálny hráč v `player`.
+- **Štatistiky:** každá udalosť je jeden riadok JSON v `<persistentDataPath>/stats/<dátum>.jsonl` (`Assets/Game/View/Stats.cs`). Zapisuje sa vždy, aj v release builde, a dáta neopustia zariadenie.
+  - Telefón: `adb pull /sdcard/Android/data/com.extynt.pointless/files/stats`
+  - Editor: `%USERPROFILE%\AppData\LocalLow\ExTynT\Pointless\stats`
+  - Robot (`Headless.Run`) počas behu nič nezapisuje a hrá za prvého hráča.
+- **Polia** (každý riadok má všetky, nepoužité sú 0, -1 alebo prázdne): `time` a `ms` (čas), `session`, `install` (náhodný identifikátor inštalácie, vznikne raz), `player` a `pid` (meno a poradie hráča v tomto zariadení), `ev` (udalosť), `mode`, `game` (poradie partie v relácii), `move` (poradie ťahu v partii), `slot`, `shape`, `size`, `place`, `lines`, `points`, `combo`, `score`, `best`, `perfects`, `triples`, `fill` (obsadené bunky po ťahu), `fits` (koľko dielikov sa ešte zmestí), `misses` (ťahy bez čistenia, kombo v Arcade a Daily zanikne pri 3), `hovers` (nad koľkými miestami hráč dielik podržal), `board` (obsadené bunky ako 64-bitová maska), `tray` (dieliky v ponuke, -1 = použitý), `perfect`, `triple`, `broke`, `dealt`, `over`, `record`, `think` (ms od poslednej akcie po zdvihnutie), `drag` (ms ťahania), `duration` (ms partie alebo otvoreného menu), `value`, `info`.
+- **Udalosti:** `session`, `player`, `player_new`, `player_switch`, `players_open`, `players_close`, `game_start`, `game_resume`, `daily_review`, `deal` (nová trojica), `pick`, `put_back`, `move`, `hint`, `undo`, `undo_denied`, `game_over`, `switch` (opustená partia), `menu_open`, `menu_close`, `help_open` (`value` 1 = prvýkrát), `help_close`, `theme`, `goal`, `sound`, `hints`, `share`, `goal_star`, `pause`, `resume`, `back` (tlačidlo Späť), `quit` (zatvorenie aplikácie).
+- **Koniec relácie:** keď systém aplikáciu v pozadí zabije, nič sa nezapíše. Za koniec relácie ber posledný `pause` alebo poslednú udalosť. Mená sú v jednom zariadení jedinečné, napísanie existujúceho mena na neho prepne. Hráčov z rôznych zariadení rozlíši `install`.
+- **Čo sa z toho dá vyčítať:** dĺžka relácií a partií, počet ťahov a skóre podľa režimu a hráča, čas premýšľania a ťahania, ako plná je doska pred koncom, používanie Undo a nápovedy, obľúbenosť režimov, tém a cieľov, Perfect Trio a tri smery naraz, opustené partie a zdieľanie Daily.
 
 ## Ladenie obťažnosti
 

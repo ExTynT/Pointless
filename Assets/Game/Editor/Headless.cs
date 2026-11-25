@@ -117,8 +117,12 @@ namespace Pointless.Editor
             string dailyReport = CheckDaily();
 
             var savedPrefs = SnapshotPrefs();
+            Stats.Muted = true;
             try
             {
+                PlayerPrefs.SetInt("player", 0);
+                view.enabled = false;
+                view.enabled = true;
                 Robot.Frame();
                 Invoke(view, "Fit");
 
@@ -135,8 +139,9 @@ namespace Pointless.Editor
                 string helpReport = CheckHelpCard(view);
                 string attemptReport = CheckDailyOneAttempt(view);
                 string tripleReport = CheckTripleClear(view);
+                string playersReport = CheckPlayers(view);
 
-                string summary = $"{dailyReport}\n{previewReport}\n{undoReport}\n{shareReport}\n{expiryReport}\n{switchReport}\n{freshReport}\n{effectsReport}\n{trioReport}\n{recordReport}\n{menuReport}\n{helpReport}\n{attemptReport}\n{tripleReport}";
+                string summary = $"{dailyReport}\n{previewReport}\n{undoReport}\n{shareReport}\n{expiryReport}\n{switchReport}\n{freshReport}\n{effectsReport}\n{trioReport}\n{recordReport}\n{menuReport}\n{helpReport}\n{attemptReport}\n{tripleReport}\n{playersReport}";
                 Log.Info(summary);
                 return summary;
             }
@@ -146,6 +151,7 @@ namespace Pointless.Editor
                 view.enabled = false;
                 RestorePrefs(savedPrefs);
                 view.enabled = true;
+                Stats.Muted = false;
             }
         }
 
@@ -584,6 +590,41 @@ namespace Pointless.Editor
             return $"Menu: top buttons {closest / side:0.00} side apart (tap areas {reach / side:0.00}), dimmed Undo at game over does nothing, Flow, Daily and Arcade, every theme and goal react to a tap, labels under modes and goals count as the item, outside tap closes.";
         }
 
+        static string CheckPlayers(GameView view)
+        {
+            var rng = new Rng(5);
+            view.BeginSeed(Mode.Arcade, 77);
+            SkipArrival(view);
+            if (PickBest(view.State, ref rng, out int slot, out int place)) PlaceThroughView(view, slot, place);
+            string first = view.State.Pack();
+            Vector2 menu = GetField<Vector2>(view, "modeButtonAt"), row = GetField<Vector2>(view, "playerAt");
+            MethodInfo rowY = typeof(GameView).GetMethod("PlayerRow", Private);
+
+            view.Press(menu);
+            view.Press(row);
+            if (!GetField<bool>(view, "playersOpen")) throw new InvalidOperationException("The player row did not open the players list.");
+            int count = GetField<string[]>(view, "players").Length;
+            view.Press(new Vector2(0f, (float)rowY.Invoke(view, new object[] { count })));
+            if (!GetField<bool>(view, "typing")) throw new InvalidOperationException("The new player row did not start typing.");
+            SetField(view, "typed", "Robot");
+            view.Press(Vector2.zero);
+            int index = GetField<int>(view, "player");
+            if (index == 0 || GetField<string[]>(view, "players")[index] != "Robot" || view.State.Pack() == first)
+                throw new InvalidOperationException("Typing a name did not create and switch to a new player with a fresh game.");
+            SkipArrival(view);
+            if (PickBest(view.State, ref rng, out slot, out place)) PlaceThroughView(view, slot, place);
+
+            view.Press(menu);
+            view.Press(row);
+            view.Press(new Vector2(0f, (float)rowY.Invoke(view, new object[] { 0 })));
+            bool kept = PlayerPrefs.HasKey($"p{index}.saved.arcade");
+            foreach (string key in PrefKeys()) PlayerPrefs.DeleteKey($"p{index}.{key}");
+            if (GetField<int>(view, "player") != 0 || view.State.Pack() != first)
+                throw new InvalidOperationException("Switching back did not restore the first player's game.");
+            if (!kept) throw new InvalidOperationException("The new player's game was not saved under its own keys.");
+            return $"Players: a typed name creates player {index} with a fresh game saved under p{index}.*, switching back restores the first player's game.";
+        }
+
         static string CheckTripleClear(GameView view)
         {
             view.BeginSeed(Mode.Flow, 2024);
@@ -835,7 +876,7 @@ namespace Pointless.Editor
         {
             "best.arcade", "best.flow", "best.daily.20261123", "best.daily.20261122",
             "best.daily." + DateSeed(DateTime.Now), "best.daily." + DateSeed(DateTime.Now.AddDays(-1)),
-            "saved", "saved.arcade", "saved.flow", "saved.daily", "goals", "last_mode", "taught", "flow_hints", "theme", "mute", "help_seen", "daily.final"
+            "saved", "saved.arcade", "saved.flow", "saved.daily", "goals", "last_mode", "taught", "flow_hints", "theme", "mute", "help_seen", "daily.final", "player", "players"
         };
 
         static Dictionary<string, string> SnapshotPrefs()
